@@ -1,0 +1,64 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties]
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/flashcard_engine}
+    username: ${DB_USER:flashcard}
+    password: ${DB_PASSWORD:flashcard}
+    hikari:
+      connection-init-sql: SET search_path TO ${app.db.schema},public,extensions
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: ${app.db.schema}
+        format_sql: true
+    open-in-view: false
+  flyway:
+    enabled: true
+    default-schema: public
+    schemas: public
+    placeholders:
+      appSchema: ${app.db.schema}
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_SIZE_MB:20}MB
+      max-request-size: ${MAX_UPLOAD_SIZE_MB:20}MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  db:
+    schema: ${DB_SCHEMA:flashcard_engine}
+  jwt:
+    secret: ${JWT_SECRET:change-me-please-change-me-please-change-me}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:1440}
+  upload:
+    max-size-mb: ${MAX_UPLOAD_SIZE_MB:20}
+  r2:
+    account-id: ${R2_ACCOUNT_ID:}
+    access-key-id: ${R2_ACCESS_KEY_ID:}
+    secret-access-key: ${R2_SECRET_ACCESS_KEY:}
+    bucket: ${R2_BUCKET:}
+    region: ${R2_REGION:auto}
+  ai:
+    gemini:
+      api-key: ${GEMINI_API_KEY:}
+      model: ${GEMINI_MODEL:gemini-3-flash-preview}
+  cors:
+    allowed-origin: ${CORS_ALLOWED_ORIGIN:http://localhost:5173}
+
+logging:
+  level:
+    org.springframework.security: INFO
+    com.flashcardengine.backend: INFO

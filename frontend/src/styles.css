@@ -1,0 +1,261 @@
+:root {
+  --bg-ink: #081018;
+  --bg-mist: #0f2732;
+  --bg-cream: #f3efe8;
+  --panel: rgba(255, 255, 255, 0.88);
+  --accent-ember: #ff5e2c;
+  --accent-teal: #14b8a6;
+  --accent-gold: #f59e0b;
+  --text-dark: #12202c;
+  --text-light: #eff9ff;
+  --danger: #f43f5e;
+  --radius: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--text-light);
+  background:
+    radial-gradient(circle at 15% 15%, #1a3a51 0%, transparent 40%),
+    radial-gradient(circle at 85% 35%, #1b4f54 0%, transparent 45%),
+    linear-gradient(130deg, var(--bg-ink), var(--bg-mist));
+  min-height: 100vh;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  position: sticky;
+  top: 0;
+  backdrop-filter: blur(8px);
+  background: rgba(6, 15, 22, 0.65);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 10;
+}
+
+.brand {
+  font-family: "Syne", sans-serif;
+  letter-spacing: 0.2rem;
+  font-size: 1.2rem;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+}
+
+.topbar a,
+.topbar button {
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-light);
+  text-decoration: none;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.page-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.2rem;
+}
+
+.surface {
+  background: var(--panel);
+  color: var(--text-dark);
+  border-radius: var(--radius);
+  padding: 1.2rem;
+  box-shadow: 0 18px 50px rgba(3, 12, 18, 0.25);
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.deck-grid {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+}
+
+.card-stat {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.button-main {
+  border: none;
+  background: linear-gradient(120deg, var(--accent-ember), #ff824f);
+  color: white;
+  padding: 0.55rem 0.9rem;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button-alt {
+  border: none;
+  background: linear-gradient(120deg, var(--accent-teal), #2dd4bf);
+  color: #042225;
+  padding: 0.55rem 0.9rem;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+input,
+select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(18, 32, 44, 0.2);
+  padding: 0.65rem 0.8rem;
+  font-size: 0.95rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.flip-wrap {
+  perspective: 1200px;
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.flip-card {
+  width: 100%;
+  min-height: 290px;
+  position: relative;
+  transform-style: preserve-3d;
+}
+
+.flip-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: 22px;
+  padding: 1.2rem;
+  background: linear-gradient(130deg, #ffffff, #e9f9ff);
+  color: #112530;
+}
+
+.flip-face.back {
+  transform: rotateY(180deg);
+  background: linear-gradient(130deg, #fff8ef, #ffe8d9);
+}
+
+.grade-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(42px, 1fr));
+  gap: 0.45rem;
+}
+
+.grade-grid button {
+  border: none;
+  border-radius: 10px;
+  font-weight: 800;
+  padding: 0.55rem;
+  cursor: pointer;
+  color: white;
+}
+
+.grade-grid button:nth-child(1),
+.grade-grid button:nth-child(2) {
+  background: #ef4444;
+}
+
+.grade-grid button:nth-child(3),
+.grade-grid button:nth-child(4) {
+  background: #f59e0b;
+}
+
+.grade-grid button:nth-child(5) {
+  background: #16a34a;
+}
+
+.heatmap {
+  display: grid;
+  grid-template-columns: repeat(15, 1fr);
+  gap: 4px;
+}
+
+.heat {
+  width: 100%;
+  padding-top: 100%;
+  border-radius: 4px;
+  background: #d6e7ee;
+}
+
+.heat.level-1 {
+  background: #95e6de;
+}
+
+.heat.level-2 {
+  background: #4fd1c5;
+}
+
+.heat.level-3 {
+  background: #14b8a6;
+}
+
+.heat.level-4 {
+  background: #0f766e;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.22rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.badge.green {
+  background: rgba(22, 163, 74, 0.12);
+  color: #166534;
+}
+
+.badge.yellow {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+
+.badge.red {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+@media (max-width: 760px) {
+  .page-wrap {
+    padding: 0.9rem;
+  }
+
+  .topbar {
+    padding: 0.9rem;
+  }
+
+  .brand {
+    font-size: 1rem;
+  }
+}

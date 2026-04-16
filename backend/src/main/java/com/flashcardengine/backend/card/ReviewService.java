@@ -9,6 +9,7 @@ import com.flashcardengine.backend.persistence.repository.CardRepository;
 import com.flashcardengine.backend.persistence.repository.CardSm2StateRepository;
 import com.flashcardengine.backend.persistence.repository.ReviewHistoryRepository;
 import com.flashcardengine.backend.persistence.repository.UserRepository;
+import com.flashcardengine.backend.session.SessionCardProgressService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -27,17 +28,20 @@ public class ReviewService {
     private final ReviewHistoryRepository reviewHistoryRepository;
     private final UserRepository userRepository;
     private final Sm2Service sm2Service;
+    private final SessionCardProgressService sessionCardProgressService;
 
     public ReviewService(CardRepository cardRepository,
                          CardSm2StateRepository cardSm2StateRepository,
                          ReviewHistoryRepository reviewHistoryRepository,
                          UserRepository userRepository,
-                         Sm2Service sm2Service) {
+                         Sm2Service sm2Service,
+                         SessionCardProgressService sessionCardProgressService) {
         this.cardRepository = cardRepository;
         this.cardSm2StateRepository = cardSm2StateRepository;
         this.reviewHistoryRepository = reviewHistoryRepository;
         this.userRepository = userRepository;
         this.sm2Service = sm2Service;
+        this.sessionCardProgressService = sessionCardProgressService;
     }
 
     @Transactional
@@ -61,6 +65,7 @@ public class ReviewService {
         review.setGrade(grade);
         reviewHistoryRepository.save(review);
 
+        sessionCardProgressService.markCardCompleted(userId, card.getDeck().getId(), cardId);
         card.getDeck().setLastReviewedAt(Instant.now());
 
         return new ReviewResponse(

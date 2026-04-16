@@ -56,6 +56,12 @@ export function DashboardPage() {
     uploadMutation.mutate({ deckId, file });
   };
 
+  const onResumeDeck = (deckId: string) => {
+    queryClient.removeQueries({ queryKey: ["deck-session", deckId] });
+    queryClient.removeQueries({ queryKey: ["due-cards", deckId] });
+    queryClient.removeQueries({ queryKey: ["deck-cards", deckId] });
+  };
+
   const deckCountLabel = useMemo(() => `${decks.length} deck${decks.length === 1 ? "" : "s"}`, [decks.length]);
 
   return (
@@ -114,7 +120,7 @@ export function DashboardPage() {
             <p className="card-stat">Last reviewed: {deck.lastReviewedAt ? new Date(deck.lastReviewedAt).toLocaleString() : "Never"}</p>
 
             <div className="row">
-              <Link className="button-main" to={`/review/${deck.id}`}>
+              <Link className="button-main" to={`/review/${deck.id}`} onClick={() => onResumeDeck(deck.id)}>
                 Resume
               </Link>
               <Link className="button-alt" to={`/analytics/${deck.id}`}>

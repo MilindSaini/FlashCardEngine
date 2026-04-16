@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { DueCard, ReviewResponse } from "../api/types";
 import { CardFlip } from "../components/CardFlip";
@@ -26,13 +26,14 @@ function difficultyBadge(review: ReviewResponse | null) {
 
 export function ReviewSessionPage() {
   const token = useAuthStore((state) => state.token);
-  const { deckId } = useParams<{ deckId: string }>();
+  const { deckId, cardId } = useParams<{ deckId: string; cardId?: string }>();
+  const navigate = useNavigate();
   const [cards, setCards] = useState<DueCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [completedCount, setCompletedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-  const [sessionMode, setSessionMode] = useState<SessionMode>("due");
+  const [sessionMode, setSessionMode] = useState<SessionMode>("all");
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const [lastReview, setLastReview] = useState<ReviewResponse | null>(null);
   const reviewedCardIdsRef = useRef<Set<string>>(new Set());
@@ -43,9 +44,20 @@ export function ReviewSessionPage() {
   const currentIndexRef = useRef(0);
   const completedCountRef = useRef(0);
   const totalCountRef = useRef(0);
-  const sessionModeRef = useRef<SessionMode>("due");
   const lastPersistedSessionKeyRef = useRef<string>("");
   const queryClient = useQueryClient();
+
+  const syncReviewRoute = useMemo(
+    () => (nextCardId: string | null, replace = true) => {
+      if (!deckId) {
+        return;
+      }
+
+      const nextPath = nextCardId ? `/review/${deckId}/${nextCardId}` : `/review/${deckId}`;
+      navigate(nextPath, { replace });
+    },
+    [deckId, navigate]
+  );
 
   useEffect(() => {
     cardsRef.current = cards;
@@ -63,14 +75,11 @@ export function ReviewSessionPage() {
     totalCountRef.current = totalCount;
   }, [totalCount]);
 
-  useEffect(() => {
-    sessionModeRef.current = sessionMode;
-  }, [sessionMode]);
-
   const sessionQuery = useQuery({
     queryKey: ["deck-session", deckId],
     queryFn: () => apiClient.getSession(deckId as string, token as string),
     enabled: Boolean(deckId && token),
+    refetchOnMount: "always",
   });
 
   const dueCardsQuery = useQuery({
@@ -80,6 +89,7 @@ export function ReviewSessionPage() {
     refetchInterval: sessionMode === "due" ? 4000 : 10000,
     refetchIntervalInBackground: false,
     retry: 1,
+    refetchOnMount: "always",
   });
 
   const deckCardsQuery = useQuery({
@@ -89,6 +99,7 @@ export function ReviewSessionPage() {
     refetchInterval: 8000,
     refetchIntervalInBackground: false,
     retry: 1,
+    refetchOnMount: "always",
   });
 
   const sessionMutation = useMutation({
@@ -100,12 +111,38 @@ export function ReviewSessionPage() {
     }) => apiClient.updateSession(deckId as string, payload, token as string),
   });
 
+  const resetProgressMutation = useMutation({
+    mutationFn: () => apiClient.resetSessionProgress(deckId as string, token as string),
+    onSuccess: () => {
+      reviewedCardIdsRef.current = new Set();
+      setCompletedCount(0);
+      setCurrentIndex(0);
+      setSessionMode("all");
+      setFlipped(false);
+      setLastReview(null);
+
+      const deckCards = deckCardsQuery.data ?? [];
+      setCards(deckCards);
+      setTotalCount(deckCards.length);
+
+      if (deckCards.length > 0) {
+        syncReviewRoute(deckCards[0].id);
+      } else {
+        syncReviewRoute(null);
+      }
+
+      void sessionQuery.refetch();
+      void dueCardsQuery.refetch();
+      void deckCardsQuery.refetch();
+    },
+  });
+
   useEffect(() => {
     setCards([]);
     setCurrentIndex(0);
     setCompletedCount(0);
     setTotalCount(0);
-    setSessionMode("due");
+    setSessionMode("all");
     setSessionHydrated(false);
     setFlipped(false);
     setLastReview(null);
@@ -121,8 +158,10 @@ export function ReviewSessionPage() {
       return;
     }
 
+    const completedCardIds = sessionQuery.data.completedCardIds ?? [];
+    reviewedCardIdsRef.current = new Set(completedCardIds);
     setCurrentIndex(Math.max(0, sessionQuery.data.currentCardIndex));
-    setCompletedCount(Math.max(0, sessionQuery.data.completedCards));
+    setCompletedCount(Math.max(0, completedCardIds.length));
     setTotalCount(Math.max(0, sessionQuery.data.totalCards));
     setSessionMode(sessionQuery.data.allCardsMode ? "all" : "due");
     setSessionHydrated(true);
@@ -130,13 +169,14 @@ export function ReviewSessionPage() {
   }, [sessionQuery.data, sessionHydrated]);
 
   useEffect(() => {
-    const discoveredTotalCards = deckCardsQuery.data?.length ?? 0;
-    if (discoveredTotalCards <= 0) {
+    if (!sessionHydrated || !deckCardsQuery.data) {
       return;
     }
 
-    setTotalCount((previous) => Math.max(previous, discoveredTotalCards));
-  }, [deckCardsQuery.data]);
+    const discoveredTotalCards = deckCardsQuery.data.length;
+    setTotalCount(discoveredTotalCards);
+    setCompletedCount((previous) => Math.min(previous, discoveredTotalCards));
+  }, [deckCardsQuery.data, sessionHydrated]);
 
   useEffect(() => {
     if (!sessionHydrated || sessionMode !== "due" || !dueCardsQuery.data) {
@@ -182,7 +222,8 @@ export function ReviewSessionPage() {
 
     setCards((previous) => {
       if (previous.length === 0) {
-        return deckCardsQuery.data.length > 0 ? deckCardsQuery.data : previous;
+        const visibleCards = deckCardsQuery.data.filter((card) => !reviewedCardIdsRef.current.has(card.id));
+        return visibleCards.length > 0 ? visibleCards : previous;
       }
 
       const existingIds = new Set(previous.map((card) => card.id));
@@ -246,38 +287,39 @@ export function ReviewSessionPage() {
     setCurrentIndex((previous) => Math.min(previous, cards.length - 1));
   }, [cards.length]);
 
-  const startAllCardsCycle = useMemo(
-    () => () => {
-      const deckCards = deckCardsQuery.data ?? [];
-      if (deckCards.length === 0) {
-        return false;
-      }
+  useEffect(() => {
+    if (!sessionHydrated || cards.length === 0 || !cardId) {
+      return;
+    }
 
-      reviewedCardIdsRef.current = new Set();
-      setSessionMode("all");
-      setCards(deckCards);
-      setCurrentIndex(0);
-      setCompletedCount(0);
-      setTotalCount(deckCards.length);
+    const routeIndex = cards.findIndex((card) => card.id === cardId);
+    if (routeIndex >= 0 && routeIndex !== currentIndexRef.current) {
+      setCurrentIndex(routeIndex);
       setFlipped(false);
-      setLastReview(null);
-      return true;
-    },
-    [deckCardsQuery.data]
-  );
+    }
+  }, [sessionHydrated, cards, cardId]);
 
   useEffect(() => {
-    if (!sessionHydrated || cards.length > 0) {
+    if (!sessionHydrated || !deckId) {
       return;
     }
 
-    const hasReachedHundred = totalCount > 0 && completedCount >= totalCount;
-    if (!hasReachedHundred) {
+    if (cards.length === 0) {
+      if (cardId) {
+        syncReviewRoute(null);
+      }
       return;
     }
 
-    startAllCardsCycle();
-  }, [sessionHydrated, cards.length, totalCount, completedCount, startAllCardsCycle]);
+    const nextCard = cards[currentIndex] ?? cards[0];
+    if (!nextCard) {
+      return;
+    }
+
+    if (cardId !== nextCard.id) {
+      syncReviewRoute(nextCard.id);
+    }
+  }, [sessionHydrated, deckId, cards, currentIndex, cardId, syncReviewRoute]);
 
   const goPrevious = useMemo(
     () => () => {
@@ -340,17 +382,20 @@ export function ReviewSessionPage() {
       const previousCards = cardsRef.current;
       const remainingCards = previousCards.filter((card) => card.id !== variables.cardId);
       const discoveredTotal = deckCardsQuery.data?.length ?? 0;
-      const nextTotal = Math.max(totalCountRef.current, discoveredTotal, previousCards.length);
+      const nextTotal = discoveredTotal > 0
+        ? discoveredTotal
+        : Math.max(totalCountRef.current, previousCards.length);
       const nextCompleted = Math.min(completedCountRef.current + 1, Math.max(nextTotal, 1));
-      const shouldRestartWithAllCards =
-        remainingCards.length === 0
-        && (
-          (nextTotal > 0 && nextCompleted >= nextTotal)
-          || sessionModeRef.current === "all"
-        );
 
-      if (shouldRestartWithAllCards && startAllCardsCycle()) {
+      if (nextTotal > 0 && nextCompleted >= nextTotal) {
+        setCards([]);
+        setCurrentIndex(0);
+        setCompletedCount(nextTotal);
+        setTotalCount(nextTotal);
         queryClient.invalidateQueries({ queryKey: ["decks"] });
+        queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
+        queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
+        resetProgressMutation.mutate();
         return;
       }
 
@@ -365,7 +410,9 @@ export function ReviewSessionPage() {
   });
 
   const currentCard = cards[currentIndex] ?? null;
-  const progressPercent = totalCount === 0 ? 0 : Math.min(100, (completedCount / totalCount) * 100);
+  const effectiveTotalCount = deckCardsQuery.data?.length ?? totalCount;
+  const remainingCount = Math.max(effectiveTotalCount - completedCount, 0);
+  const progressPercent = effectiveTotalCount === 0 ? 0 : Math.min(100, (completedCount / effectiveTotalCount) * 100);
   const badge = difficultyBadge(lastReview);
 
   const gradeButtons = useMemo(() => [1, 2, 3, 4, 5], []);
@@ -377,7 +424,7 @@ export function ReviewSessionPage() {
   }
 
   if (!currentCard) {
-    const hasReachedHundred = totalCount > 0 && completedCount >= totalCount;
+    const hasReachedHundred = effectiveTotalCount > 0 && completedCount >= effectiveTotalCount;
     const waitingOnDueCards = sessionMode === "due" && dueCardsQuery.isFetching;
     const waitingOnDeckCards = deckCardsQuery.isFetching;
 
@@ -390,6 +437,7 @@ export function ReviewSessionPage() {
       <section className="surface">
         <h2>{title}</h2>
         <p>{message}</p>
+        <p>Completed: {completedCount} | Remaining: {remainingCount}</p>
         <p>{waitingOnDueCards || waitingOnDeckCards ? "Syncing latest cards..." : "Use Refresh if you want to force-check now."}</p>
         <div className="row">
           <button
@@ -403,8 +451,12 @@ export function ReviewSessionPage() {
             {dueCardsQuery.isFetching || deckCardsQuery.isFetching ? "Refreshing..." : "Refresh"}
           </button>
           {hasReachedHundred && (
-            <button className="button-main" onClick={() => startAllCardsCycle()}>
-              Start Full Deck
+            <button
+              className="button-main"
+              onClick={() => resetProgressMutation.mutate()}
+              disabled={resetProgressMutation.isPending}
+            >
+              {resetProgressMutation.isPending ? "Restarting..." : "Restart Deck"}
             </button>
           )}
           <Link className="button-main" to="/">
@@ -424,9 +476,9 @@ export function ReviewSessionPage() {
     <div className="grid">
       <section className="surface">
         <h1>Review Session</h1>
-        <p>Progress: {progressPercent.toFixed(1)}% ({completedCount}/{totalCount || 0})</p>
+        <p>Progress: {progressPercent.toFixed(1)}% ({completedCount}/{effectiveTotalCount || 0})</p>
+        <p>Completed: {completedCount} | Remaining: {remainingCount}</p>
         <p>Mode: {sessionMode === "all" ? "All cards" : "Due cards"}</p>
-        <p>Card: {currentIndex + 1} / {cards.length}</p>
         <p>{dueCardsQuery.isFetching ? "Checking for new generated cards..." : "Live queue updates are active."}</p>
         <div
           style={{
@@ -492,12 +544,13 @@ export function ReviewSessionPage() {
         )}
       </section>
 
-      {(dueCardsQuery.isError || deckCardsQuery.isError || sessionQuery.isError || reviewMutation.isError || sessionMutation.isError) && (
+      {(dueCardsQuery.isError || deckCardsQuery.isError || sessionQuery.isError || reviewMutation.isError || sessionMutation.isError || resetProgressMutation.isError) && (
         <section className="surface" style={{ color: "#b91c1c" }}>
           {(dueCardsQuery.error as Error)?.message ||
             (deckCardsQuery.error as Error)?.message ||
             (sessionQuery.error as Error)?.message ||
             (sessionMutation.error as Error)?.message ||
+            (resetProgressMutation.error as Error)?.message ||
             (reviewMutation.error as Error)?.message}
         </section>
       )}

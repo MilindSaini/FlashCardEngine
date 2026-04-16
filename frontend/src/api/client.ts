@@ -114,6 +114,15 @@ export const apiClient = {
       token
     ),
 
+  resetSessionProgress: (deckId: string, token: string) =>
+    request<SessionState>(
+      `/api/decks/${deckId}/session/progress`,
+      {
+        method: "DELETE",
+      },
+      token
+    ),
+
   analytics: (deckId: string, token: string) =>
     request<DeckAnalytics>(`/api/analytics/decks/${deckId}`, {}, token),
 

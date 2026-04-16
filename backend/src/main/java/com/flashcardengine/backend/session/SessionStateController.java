@@ -4,6 +4,7 @@ import com.flashcardengine.backend.common.SecurityUtils;
 import com.flashcardengine.backend.session.dto.SessionStateResponse;
 import com.flashcardengine.backend.session.dto.UpdateSessionRequest;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -38,5 +39,10 @@ public class SessionStateController {
             deckId,
             request
         );
+    }
+
+    @DeleteMapping("/progress")
+    public SessionStateResponse resetProgress(@PathVariable UUID deckId) {
+        return sessionStateService.resetProgress(securityUtils.currentUserId(), deckId);
     }
 }

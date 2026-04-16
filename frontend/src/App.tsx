@@ -47,6 +47,14 @@ export default function App() {
             }
           />
           <Route
+            path="/review/:deckId/:cardId"
+            element={
+              <Protected>
+                <ReviewSessionPage />
+              </Protected>
+            }
+          />
+          <Route
             path="/analytics/:deckId"
             element={
               <Protected>

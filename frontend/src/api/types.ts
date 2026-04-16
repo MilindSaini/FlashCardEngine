@@ -41,6 +41,8 @@ export type SessionState = {
   completedCards: number;
   totalCards: number;
   allCardsMode: boolean;
+  deckCycleCompleted: boolean;
+  completedCardIds: string[];
   lastAccessed: string;
 };
 

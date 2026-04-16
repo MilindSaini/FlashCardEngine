@@ -141,6 +141,46 @@ select {
   margin: 0 auto;
 }
 
+.review-card-surface {
+  position: relative;
+  overflow: hidden;
+}
+
+.review-card-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 25%, rgba(255, 255, 255, 0.35) 50%, transparent 75%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-110%);
+}
+
+.review-card-surface.grade-hit-4::after,
+.review-card-surface.grade-hit-5::after {
+  animation: gradeSweep 620ms ease-out;
+}
+
+.review-card-surface.grade-hit-1 {
+  animation: gradeShake 360ms ease-in-out;
+}
+
+.review-card-surface.grade-hit-2 {
+  animation: gradeWobble 520ms ease-in-out;
+}
+
+.review-card-surface.grade-hit-3 {
+  animation: gradePulse 560ms ease-out;
+}
+
+.review-card-surface.grade-hit-4 {
+  animation: gradeLift 640ms ease-out;
+}
+
+.review-card-surface.grade-hit-5 {
+  animation: gradeVictory 800ms cubic-bezier(0.18, 0.89, 0.32, 1.22);
+}
+
 .flip-card {
   width: 100%;
   min-height: 290px;
@@ -190,6 +230,74 @@ select {
 
 .grade-grid button:nth-child(5) {
   background: #16a34a;
+}
+
+.grade-reaction {
+  margin: 0;
+  min-height: 1.45rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.grade-reaction.grade-hit-1 {
+  color: #b91c1c;
+}
+
+.grade-reaction.grade-hit-2 {
+  color: #c2410c;
+}
+
+.grade-reaction.grade-hit-3 {
+  color: #0f766e;
+}
+
+.grade-reaction.grade-hit-4 {
+  color: #166534;
+}
+
+.grade-reaction.grade-hit-5 {
+  color: #14532d;
+}
+
+@keyframes gradeShake {
+  0%,
+  100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(7px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes gradeWobble {
+  0%,
+  100% { transform: rotate(0deg); }
+  30% { transform: rotate(-1.2deg) scale(0.998); }
+  65% { transform: rotate(1.1deg) scale(1.002); }
+}
+
+@keyframes gradePulse {
+  0% { transform: scale(1); box-shadow: 0 18px 50px rgba(3, 12, 18, 0.25); }
+  50% { transform: scale(1.01); box-shadow: 0 24px 60px rgba(20, 184, 166, 0.25); }
+  100% { transform: scale(1); box-shadow: 0 18px 50px rgba(3, 12, 18, 0.25); }
+}
+
+@keyframes gradeLift {
+  0% { transform: translateY(0); }
+  45% { transform: translateY(-6px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes gradeVictory {
+  0% { transform: scale(1); box-shadow: 0 18px 50px rgba(3, 12, 18, 0.25); }
+  35% { transform: scale(1.028) translateY(-5px); box-shadow: 0 28px 72px rgba(22, 163, 74, 0.32); }
+  70% { transform: scale(1.012); }
+  100% { transform: scale(1); box-shadow: 0 18px 50px rgba(3, 12, 18, 0.25); }
+}
+
+@keyframes gradeSweep {
+  0% { opacity: 0; transform: translateX(-110%); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(110%); }
 }
 
 .heatmap {

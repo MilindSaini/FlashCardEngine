@@ -8,6 +8,7 @@ import { CardFlip } from "../components/CardFlip";
 import { useAuthStore } from "../store/authStore";
 
 type SessionMode = "due" | "all";
+type GradeEffectClass = "" | "grade-hit-1" | "grade-hit-2" | "grade-hit-3" | "grade-hit-4" | "grade-hit-5";
 
 const FIRST_ARRIVAL_REFRESH_KEY_PREFIX = "review-first-arrival-refreshed:";
 
@@ -36,6 +37,8 @@ export function ReviewSessionPage() {
   const [sessionMode, setSessionMode] = useState<SessionMode>("all");
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const [lastReview, setLastReview] = useState<ReviewResponse | null>(null);
+  const [gradeEffectClass, setGradeEffectClass] = useState<GradeEffectClass>("");
+  const [gradeReaction, setGradeReaction] = useState("");
   const reviewedCardIdsRef = useRef<Set<string>>(new Set());
   const sawInitialDuePayloadRef = useRef(false);
   const startedWithoutCardsRef = useRef(false);
@@ -45,7 +48,131 @@ export function ReviewSessionPage() {
   const completedCountRef = useRef(0);
   const totalCountRef = useRef(0);
   const lastPersistedSessionKeyRef = useRef<string>("");
+  const gradeEffectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryClient = useQueryClient();
+
+  const triggerGradeAnimation = (grade: number, mastered: boolean) => {
+    if (gradeEffectTimeoutRef.current) {
+      clearTimeout(gradeEffectTimeoutRef.current);
+      gradeEffectTimeoutRef.current = null;
+    }
+
+    if (grade === 1) {
+      setGradeEffectClass("grade-hit-1");
+      setGradeReaction("Tough one. Bounce back on the next card.");
+      confetti({
+        particleCount: 34,
+        spread: 34,
+        angle: 120,
+        startVelocity: 22,
+        gravity: 1.5,
+        scalar: 0.8,
+        origin: { x: 0, y: 0.84 },
+        colors: ["#ef4444", "#f97316", "#f59e0b"],
+      });
+      confetti({
+        particleCount: 34,
+        spread: 34,
+        angle: 60,
+        startVelocity: 22,
+        gravity: 1.5,
+        scalar: 0.8,
+        origin: { x: 1, y: 0.84 },
+        colors: ["#ef4444", "#f97316", "#f59e0b"],
+      });
+    } else if (grade === 2) {
+      setGradeEffectClass("grade-hit-2");
+      setGradeReaction("Warming up. Keep going.");
+      confetti({
+        particleCount: 46,
+        spread: 50,
+        startVelocity: 28,
+        gravity: 1.2,
+        scalar: 0.86,
+        origin: { x: 0.5, y: 0.78 },
+        colors: ["#f97316", "#f59e0b", "#fb7185"],
+      });
+    } else if (grade === 3) {
+      setGradeEffectClass("grade-hit-3");
+      setGradeReaction("Nice. Solid recall.");
+      confetti({
+        particleCount: 58,
+        spread: 64,
+        startVelocity: 34,
+        gravity: 1.05,
+        scalar: 0.95,
+        origin: { x: 0.5, y: 0.75 },
+        colors: ["#14b8a6", "#2dd4bf", "#f59e0b", "#f97316"],
+      });
+    } else if (grade === 4) {
+      setGradeEffectClass("grade-hit-4");
+      setGradeReaction("Great recall.");
+      confetti({
+        particleCount: 56,
+        spread: 56,
+        angle: 105,
+        startVelocity: 40,
+        gravity: 0.95,
+        scalar: 1.02,
+        origin: { x: 0, y: 0.8 },
+        colors: ["#14b8a6", "#2dd4bf", "#22c55e", "#f59e0b"],
+      });
+      confetti({
+        particleCount: 56,
+        spread: 56,
+        angle: 75,
+        startVelocity: 40,
+        gravity: 0.95,
+        scalar: 1.02,
+        origin: { x: 1, y: 0.8 },
+        colors: ["#14b8a6", "#2dd4bf", "#22c55e", "#f59e0b"],
+      });
+    } else {
+      setGradeEffectClass("grade-hit-5");
+      setGradeReaction(mastered ? "Perfect recall. Mastery unlocked." : "Perfect recall. Amazing hit.");
+
+      const total = 180;
+      const burst = (ratio: number, options: Parameters<typeof confetti>[0]) => {
+        confetti({
+          ...options,
+          particleCount: Math.floor(total * ratio),
+        });
+      };
+
+      burst(0.25, {
+        spread: 28,
+        startVelocity: 56,
+        origin: { y: 0.74 },
+        colors: ["#22c55e", "#14b8a6", "#f59e0b", "#ff5e2c"],
+      });
+      burst(0.2, {
+        spread: 52,
+        startVelocity: 44,
+        origin: { y: 0.72 },
+        colors: ["#22c55e", "#14b8a6", "#f59e0b", "#ff5e2c"],
+      });
+      burst(0.35, {
+        spread: 108,
+        decay: 0.9,
+        scalar: 0.9,
+        origin: { y: 0.68 },
+        colors: ["#22c55e", "#14b8a6", "#f59e0b", "#ff5e2c"],
+      });
+      burst(0.2, {
+        spread: 126,
+        startVelocity: 28,
+        decay: 0.92,
+        scalar: 1.08,
+        origin: { y: 0.64 },
+        colors: ["#22c55e", "#14b8a6", "#f59e0b", "#ff5e2c"],
+      });
+    }
+
+    gradeEffectTimeoutRef.current = setTimeout(() => {
+      setGradeEffectClass("");
+      setGradeReaction("");
+    }, 1000);
+  };
 
   const syncReviewRoute = useMemo(
     () => (nextCardId: string | null, replace = true) => {
@@ -74,6 +201,14 @@ export function ReviewSessionPage() {
   useEffect(() => {
     totalCountRef.current = totalCount;
   }, [totalCount]);
+
+  useEffect(() => {
+    return () => {
+      if (gradeEffectTimeoutRef.current) {
+        clearTimeout(gradeEffectTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const sessionQuery = useQuery({
     queryKey: ["deck-session", deckId],
@@ -367,13 +502,7 @@ export function ReviewSessionPage() {
     mutationFn: ({ cardId, grade }: { cardId: string; grade: number }) =>
       apiClient.submitReview(cardId, grade, token as string),
     onSuccess: (response, variables) => {
-      if (response.mastered) {
-        confetti({
-          particleCount: 110,
-          spread: 65,
-          origin: { y: 0.7 },
-        });
-      }
+      triggerGradeAnimation(variables.grade, response.mastered);
 
       reviewedCardIdsRef.current.add(variables.cardId);
       setLastReview(response);
@@ -499,7 +628,7 @@ export function ReviewSessionPage() {
         </div>
       </section>
 
-      <section className="surface">
+      <section className={`surface review-card-surface ${gradeEffectClass}`}>
         <div className="row" style={{ justifyContent: "space-between", marginBottom: "0.8rem" }}>
           <button className="button-alt" onClick={goPrevious} disabled={!canMoveBack || reviewMutation.isPending}>
             ← Previous
@@ -536,6 +665,8 @@ export function ReviewSessionPage() {
             </button>
           ))}
         </div>
+
+        {gradeReaction && <p className={`grade-reaction ${gradeEffectClass}`}>{gradeReaction}</p>}
 
         {lastReview && (
           <p>

@@ -9,8 +9,10 @@ import { useAuthStore } from "../store/authStore";
 
 type SessionMode = "due" | "all";
 type GradeEffectClass = "" | "grade-hit-1" | "grade-hit-2" | "grade-hit-3" | "grade-hit-4" | "grade-hit-5";
+type LeitnerBox = 1 | 2 | 3 | 4 | 5;
 
 const FIRST_ARRIVAL_REFRESH_KEY_PREFIX = "review-first-arrival-refreshed:";
+const CARD_FADE_MS = 240;
 
 function difficultyBadge(review: ReviewResponse | null) {
   if (!review) {
@@ -23,6 +25,45 @@ function difficultyBadge(review: ReviewResponse | null) {
     return { label: "Fragile memory", className: "badge red", icon: "🔴" };
   }
   return { label: "Building memory", className: "badge yellow", icon: "🟡" };
+}
+
+function nextLeitnerBox(currentBox: LeitnerBox, grade: number): LeitnerBox {
+  if (grade <= 1) {
+    return 1;
+  }
+
+  if (grade === 2) {
+    return currentBox <= 2 ? 1 : 2;
+  }
+
+  if (grade === 3) {
+    if (currentBox <= 1) {
+      return 2;
+    }
+    return 3;
+  }
+
+  if (grade === 4) {
+    return 4;
+  }
+
+  return 5;
+}
+
+function computeLeitnerReinsertIndex(box: LeitnerBox, currentIndex: number, remainingLength: number) {
+  if (remainingLength <= 0) {
+    return 0;
+  }
+
+  if (box === 1) {
+    return Math.min(currentIndex + 1, remainingLength);
+  }
+
+  if (box === 2) {
+    return Math.min(currentIndex + 3, remainingLength);
+  }
+
+  return Math.min(currentIndex + 6, remainingLength);
 }
 
 export function ReviewSessionPage() {
@@ -39,11 +80,13 @@ export function ReviewSessionPage() {
   const [lastReview, setLastReview] = useState<ReviewResponse | null>(null);
   const [gradeEffectClass, setGradeEffectClass] = useState<GradeEffectClass>("");
   const [gradeReaction, setGradeReaction] = useState("");
+  const [fadingCardId, setFadingCardId] = useState<string | null>(null);
   const reviewedCardIdsRef = useRef<Set<string>>(new Set());
   const sawInitialDuePayloadRef = useRef(false);
   const startedWithoutCardsRef = useRef(false);
   const skipNextSessionPersistRef = useRef(true);
   const cardsRef = useRef<DueCard[]>([]);
+  const leitnerBoxesRef = useRef<Record<string, LeitnerBox>>({});
   const currentIndexRef = useRef(0);
   const completedCountRef = useRef(0);
   const totalCountRef = useRef(0);
@@ -250,11 +293,13 @@ export function ReviewSessionPage() {
     mutationFn: () => apiClient.resetSessionProgress(deckId as string, token as string),
     onSuccess: () => {
       reviewedCardIdsRef.current = new Set();
+      leitnerBoxesRef.current = {};
       setCompletedCount(0);
       setCurrentIndex(0);
       setSessionMode("all");
       setFlipped(false);
       setLastReview(null);
+      setFadingCardId(null);
 
       const deckCards = deckCardsQuery.data ?? [];
       setCards(deckCards);
@@ -281,7 +326,9 @@ export function ReviewSessionPage() {
     setSessionHydrated(false);
     setFlipped(false);
     setLastReview(null);
+    setFadingCardId(null);
     reviewedCardIdsRef.current = new Set();
+    leitnerBoxesRef.current = {};
     sawInitialDuePayloadRef.current = false;
     startedWithoutCardsRef.current = false;
     skipNextSessionPersistRef.current = true;
@@ -295,6 +342,11 @@ export function ReviewSessionPage() {
 
     const completedCardIds = sessionQuery.data.completedCardIds ?? [];
     reviewedCardIdsRef.current = new Set(completedCardIds);
+    const nextBoxes: Record<string, LeitnerBox> = {};
+    for (const completedId of completedCardIds) {
+      nextBoxes[completedId] = 4;
+    }
+    leitnerBoxesRef.current = nextBoxes;
     setCurrentIndex(Math.max(0, sessionQuery.data.currentCardIndex));
     setCompletedCount(Math.max(0, completedCardIds.length));
     setTotalCount(Math.max(0, sessionQuery.data.totalCards));
@@ -419,8 +471,16 @@ export function ReviewSessionPage() {
       setCurrentIndex(0);
       return;
     }
+
+    const boxes = leitnerBoxesRef.current;
+    for (const card of cards) {
+      if (boxes[card.id] == null) {
+        boxes[card.id] = 1;
+      }
+    }
+
     setCurrentIndex((previous) => Math.min(previous, cards.length - 1));
-  }, [cards.length]);
+  }, [cards]);
 
   useEffect(() => {
     if (!sessionHydrated || cards.length === 0 || !cardId) {
@@ -501,35 +561,78 @@ export function ReviewSessionPage() {
   const reviewMutation = useMutation({
     mutationFn: ({ cardId, grade }: { cardId: string; grade: number }) =>
       apiClient.submitReview(cardId, grade, token as string),
-    onSuccess: (response, variables) => {
+    onSuccess: async (response, variables) => {
       triggerGradeAnimation(variables.grade, response.mastered);
-
-      reviewedCardIdsRef.current.add(variables.cardId);
       setLastReview(response);
       setFlipped(false);
 
       const previousCards = cardsRef.current;
-      const remainingCards = previousCards.filter((card) => card.id !== variables.cardId);
+      const currentCard = previousCards.find((card) => card.id === variables.cardId);
+
+      if (!currentCard) {
+        queryClient.invalidateQueries({ queryKey: ["decks"] });
+        queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
+        queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
+        return;
+      }
+
+      const currentBox = leitnerBoxesRef.current[currentCard.id] ?? 1;
+      const nextBox = nextLeitnerBox(currentBox, variables.grade);
+      const shouldComplete = nextBox >= 4;
+      leitnerBoxesRef.current[currentCard.id] = nextBox;
+
+      if (shouldComplete) {
+        setFadingCardId(variables.cardId);
+        await new Promise((resolve) => setTimeout(resolve, CARD_FADE_MS));
+        setFadingCardId(null);
+        reviewedCardIdsRef.current.add(variables.cardId);
+        delete leitnerBoxesRef.current[currentCard.id];
+      } else {
+        reviewedCardIdsRef.current.delete(variables.cardId);
+      }
+
       const discoveredTotal = deckCardsQuery.data?.length ?? 0;
       const nextTotal = discoveredTotal > 0
         ? discoveredTotal
         : Math.max(totalCountRef.current, previousCards.length);
-      const nextCompleted = Math.min(completedCountRef.current + 1, Math.max(nextTotal, 1));
+      const nextCompleted = shouldComplete
+        ? Math.min(completedCountRef.current + 1, Math.max(nextTotal, 1))
+        : completedCountRef.current;
 
-      if (nextTotal > 0 && nextCompleted >= nextTotal) {
-        setCards([]);
-        setCurrentIndex(0);
-        setCompletedCount(nextTotal);
-        setTotalCount(nextTotal);
-        queryClient.invalidateQueries({ queryKey: ["decks"] });
-        queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
-        queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
-        resetProgressMutation.mutate();
-        return;
+      if (shouldComplete) {
+        const remainingCards = previousCards.filter((card) => card.id !== variables.cardId);
+
+        if (nextTotal > 0 && nextCompleted >= nextTotal) {
+          setCards([]);
+          setCurrentIndex(0);
+          setCompletedCount(nextTotal);
+          setTotalCount(nextTotal);
+          queryClient.invalidateQueries({ queryKey: ["decks"] });
+          queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
+          queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
+          resetProgressMutation.mutate();
+          return;
+        }
+
+        setCards(remainingCards);
+        setCurrentIndex((index) => Math.min(index, Math.max(remainingCards.length - 1, 0)));
+      } else {
+        const remainingCards = previousCards.filter((card) => card.id !== variables.cardId);
+        const reinsertIndex = computeLeitnerReinsertIndex(
+          nextBox,
+          currentIndexRef.current,
+          remainingCards.length
+        );
+        const nextCards = [
+          ...remainingCards.slice(0, reinsertIndex),
+          currentCard,
+          ...remainingCards.slice(reinsertIndex),
+        ];
+
+        setCards(nextCards);
+        setCurrentIndex(Math.min(currentIndexRef.current, Math.max(nextCards.length - 1, 0)));
       }
 
-      setCards(remainingCards);
-      setCurrentIndex((index) => Math.min(index, Math.max(remainingCards.length - 1, 0)));
       setCompletedCount(nextCompleted);
       setTotalCount(nextTotal);
       queryClient.invalidateQueries({ queryKey: ["decks"] });
@@ -608,6 +711,7 @@ export function ReviewSessionPage() {
         <p>Progress: {progressPercent.toFixed(1)}% ({completedCount}/{effectiveTotalCount || 0})</p>
         <p>Completed: {completedCount} | Remaining: {remainingCount}</p>
         <p>Mode: {sessionMode === "all" ? "All cards" : "Due cards"}</p>
+        <p>Scheduling: SM-2 grading + Leitner review queue</p>
         <p>{dueCardsQuery.isFetching ? "Checking for new generated cards..." : "Live queue updates are active."}</p>
         <div
           style={{
@@ -638,12 +742,14 @@ export function ReviewSessionPage() {
           </button>
         </div>
 
-        <CardFlip
-          front={currentCard.front}
-          back={currentCard.back}
-          flipped={flipped}
-          onToggle={() => setFlipped((value) => !value)}
-        />
+        <div className={`review-card-stage ${currentCard.id === fadingCardId ? "card-fade-out" : ""}`}>
+          <CardFlip
+            front={currentCard.front}
+            back={currentCard.back}
+            flipped={flipped}
+            onToggle={() => setFlipped((value) => !value)}
+          />
+        </div>
       </section>
 
       <section className="surface grid">

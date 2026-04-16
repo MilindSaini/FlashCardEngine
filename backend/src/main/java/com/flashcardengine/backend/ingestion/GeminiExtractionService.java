@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -58,6 +59,9 @@ public class GeminiExtractionService implements AIExtractionService {
     private static final int MAX_FRONT_LENGTH = 120;
     private static final int MAX_BACK_LENGTH = 340;
     private static final int MAX_REFINED_CARDS_PER_CHUNK = 8;
+    private static final int MAX_DECK_GRAPH_INPUT_CARDS = 72;
+    private static final int MAX_DECK_GRAPH_NODES = 24;
+    private static final int MAX_DECK_GRAPH_LINKS = 36;
     private static final Pattern DEFINABLE_PHRASE_PATTERN = Pattern.compile(
         "(?i)^\\s*(?:the|a|an)?\\s*([\\p{L}\\p{N}\\- ]{3,80}?)\\s+(?:is|are|means|refers to|denotes)\\b"
     );
@@ -117,6 +121,51 @@ public class GeminiExtractionService implements AIExtractionService {
         String prompt = "Extract up to 2 worked examples from the text. " +
             "Return JSON array only: [{\"front\":\"How do you solve this problem?\",\"back\":\"Short step-by-step note\"}]";
         return extractCards(chunk, prompt, CardType.EXAMPLE, 2);
+    }
+
+    @Override
+    public GeneratedCardDraft buildDeckConceptGraph(List<GeneratedCardDraft> cards) {
+        if (cards == null || cards.isEmpty()) {
+            return null;
+        }
+
+        List<GeneratedCardDraft> usableCards = cards.stream()
+            .filter(card -> card != null && card.type() != CardType.RELATION)
+            .filter(card -> !compactWhitespace(card.front()).isBlank() && !compactWhitespace(card.back()).isBlank())
+            .limit(MAX_DECK_GRAPH_INPUT_CARDS)
+            .toList();
+
+        if (usableCards.isEmpty()) {
+            return null;
+        }
+
+        String source = buildDeckGraphSource(usableCards);
+        String prompt = """
+            Build one deck-level concept graph from these flashcards.
+            Return ONLY one JSON object with this exact shape:
+            {
+              "nodes":[{"id":"Concept"}],
+              "links":[{"source":"Concept A","target":"Concept B","label":"relationship"}]
+            }
+            Rules:
+            - Use concepts grounded in the provided cards.
+            - Capture meaningful relationships between concepts taught by different cards.
+            - Prefer concise concept IDs (2-6 words).
+            - Avoid placeholders like Core Concept/Related Concept.
+            - Keep graph readable: max 24 nodes and max 36 links.
+            """;
+
+        String raw = extractRawJson(source, prompt);
+        String normalizedGraph = normalizeDeckGraphJson(raw);
+        if (normalizedGraph.isBlank() || isGenericPlaceholderGraph(normalizedGraph)) {
+            normalizedGraph = fallbackDeckRelationshipGraph(usableCards);
+        }
+
+        return new GeneratedCardDraft(
+            CardType.RELATION,
+            "Explain how the key ideas in this deck connect",
+            normalizedGraph
+        );
     }
 
     @Override
@@ -684,6 +733,172 @@ public class GeminiExtractionService implements AIExtractionService {
             return "";
         }
         return value.replaceAll("[^\\p{L}\\p{N}\\- ]", "").trim();
+    }
+
+    private String buildDeckGraphSource(List<GeneratedCardDraft> cards) {
+        StringBuilder builder = new StringBuilder();
+        int index = 1;
+        for (GeneratedCardDraft card : cards) {
+            builder
+                .append(index)
+                .append(". [")
+                .append(card.type().name())
+                .append("] front: ")
+                .append(truncate(compactWhitespace(card.front()), 160))
+                .append(" | back: ")
+                .append(truncate(compactWhitespace(card.back()), 220))
+                .append('\n');
+            index += 1;
+        }
+        return builder.toString();
+    }
+
+    private String normalizeDeckGraphJson(String raw) {
+        try {
+            JsonNode root = objectMapper.readTree(cleanJson(raw));
+            if (!root.isObject()) {
+                return "";
+            }
+
+            LinkedHashSet<String> nodeIds = new LinkedHashSet<>();
+            JsonNode nodes = root.path("nodes");
+            if (nodes.isArray()) {
+                for (JsonNode node : nodes) {
+                    if (nodeIds.size() >= MAX_DECK_GRAPH_NODES) {
+                        break;
+                    }
+                    String id = truncate(compactWhitespace(node.path("id").asText("")), 60);
+                    if (!id.isBlank()) {
+                        nodeIds.add(id);
+                    }
+                }
+            }
+
+            LinkedHashMap<String, Map<String, String>> normalizedLinks = new LinkedHashMap<>();
+            JsonNode links = root.path("links");
+            if (links.isArray()) {
+                for (JsonNode link : links) {
+                    if (normalizedLinks.size() >= MAX_DECK_GRAPH_LINKS) {
+                        break;
+                    }
+
+                    String source = truncate(compactWhitespace(link.path("source").asText("")), 60);
+                    String target = truncate(compactWhitespace(link.path("target").asText("")), 60);
+                    String label = truncate(compactWhitespace(link.path("label").asText("related to")), 60);
+
+                    if (source.isBlank() || target.isBlank()) {
+                        continue;
+                    }
+
+                    if (!nodeIds.contains(source)) {
+                        if (nodeIds.size() >= MAX_DECK_GRAPH_NODES) {
+                            continue;
+                        }
+                        nodeIds.add(source);
+                    }
+                    if (!nodeIds.contains(target)) {
+                        if (nodeIds.size() >= MAX_DECK_GRAPH_NODES) {
+                            continue;
+                        }
+                        nodeIds.add(target);
+                    }
+
+                    String normalizedLabel = label.isBlank() ? "related to" : label;
+                    String key = source + "->" + target + "|" + normalizedLabel;
+                    normalizedLinks.putIfAbsent(
+                        key,
+                        Map.of("source", source, "target", target, "label", normalizedLabel)
+                    );
+                }
+            }
+
+            if (nodeIds.isEmpty() || normalizedLinks.isEmpty()) {
+                return "";
+            }
+
+            List<Map<String, String>> nodesPayload = nodeIds.stream()
+                .map(nodeId -> Map.of("id", nodeId))
+                .toList();
+
+            return objectMapper.writeValueAsString(Map.of(
+                "nodes", nodesPayload,
+                "links", new ArrayList<>(normalizedLinks.values())
+            ));
+        } catch (Exception ex) {
+            log.debug("Failed to normalize deck-level concept graph JSON.", ex);
+            return "";
+        }
+    }
+
+    private boolean isGenericPlaceholderGraph(String graphJson) {
+        String compact = graphJson.replace(" ", "").toLowerCase(Locale.ROOT);
+        return compact.contains("\"id\":\"coreconcept\"")
+            && compact.contains("\"id\":\"relatedconcept\"");
+    }
+
+    private String fallbackDeckRelationshipGraph(List<GeneratedCardDraft> cards) {
+        LinkedHashSet<String> concepts = new LinkedHashSet<>();
+        for (GeneratedCardDraft card : cards) {
+            if (concepts.size() >= 10) {
+                break;
+            }
+
+            String concept = extractConceptLabel(card);
+            if (!concept.isBlank()) {
+                concepts.add(concept);
+            }
+        }
+
+        if (concepts.size() < 2) {
+            return "{" +
+                "\"nodes\":[{\"id\":\"Foundational Idea\"},{\"id\":\"Applied Idea\"}]," +
+                "\"links\":[{\"source\":\"Foundational Idea\",\"target\":\"Applied Idea\",\"label\":\"supports\"}]" +
+                "}";
+        }
+
+        List<String> conceptList = new ArrayList<>(concepts);
+        List<Map<String, String>> nodes = conceptList.stream().map(id -> Map.of("id", id)).toList();
+        List<Map<String, String>> links = new ArrayList<>();
+
+        for (int index = 0; index < conceptList.size() - 1; index++) {
+            links.add(Map.of(
+                "source", conceptList.get(index),
+                "target", conceptList.get(index + 1),
+                "label", "builds on"
+            ));
+        }
+
+        if (conceptList.size() > 2) {
+            links.add(Map.of(
+                "source", conceptList.get(0),
+                "target", conceptList.get(conceptList.size() - 1),
+                "label", "connects to"
+            ));
+        }
+
+        try {
+            return objectMapper.writeValueAsString(Map.of("nodes", nodes, "links", links));
+        } catch (Exception ex) {
+            return "{" +
+                "\"nodes\":[{\"id\":\"Foundational Idea\"},{\"id\":\"Applied Idea\"}]," +
+                "\"links\":[{\"source\":\"Foundational Idea\",\"target\":\"Applied Idea\",\"label\":\"supports\"}]" +
+                "}";
+        }
+    }
+
+    private String extractConceptLabel(GeneratedCardDraft card) {
+        String front = compactWhitespace(card.front())
+            .replaceAll("(?i)^(what|how|why|when|which|where|who|explain|describe|work through|compare)\\s+", "")
+            .replaceAll("(?i)^(does|is|are|can|should)\\s+", "")
+            .replaceAll("[:?!.]+$", "")
+            .trim();
+
+        if (front.length() >= 6) {
+            return truncate(front, 56);
+        }
+
+        String back = compactWhitespace(card.back());
+        return truncate(back, 56);
     }
 
     private String truncate(String value, int maxLength) {

@@ -48,6 +48,7 @@ public class IngestionService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final String cardsTable;
+    private final String deckConceptGraphTable;
 
     public IngestionService(R2StorageService r2StorageService,
                             DeckRepository deckRepository,
@@ -72,6 +73,7 @@ public class IngestionService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         SqlSchema schema = SqlSchema.of(schemaName);
         this.cardsTable = schema.table("cards");
+        this.deckConceptGraphTable = schema.table("deck_concept_graph");
     }
 
     public void processUpload(PdfUploadedEvent event) {
@@ -100,18 +102,22 @@ public class IngestionService {
             return;
         }
 
+        transactionTemplate.execute(status -> {
+            cardRepository.deleteByDeckIdAndType(deck.getId(), CardType.RELATION);
+            return null;
+        });
+
         int cardsCreated = 0;
-        int skippedLowSignalRelations = 0;
         int skippedLowQualityCards = 0;
         int skippedDuplicates = 0;
         Set<String> seenCards = new HashSet<>();
+        List<GeneratedCardDraft> createdStudyCards = new ArrayList<>();
 
         for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
             String chunk = chunks.get(chunkIndex);
 
             List<GeneratedCardDraft> rawDrafts = new ArrayList<>();
             rawDrafts.addAll(extractionService.extractDefinitions(chunk));
-            rawDrafts.addAll(extractionService.extractRelationships(chunk));
             rawDrafts.addAll(extractionService.extractEdgeCases(chunk));
             rawDrafts.addAll(extractionService.extractWorkedExamples(chunk));
 
@@ -128,11 +134,6 @@ public class IngestionService {
 
                 if (isLowQualityCard(draft.type(), front, back)) {
                     skippedLowQualityCards += 1;
-                    continue;
-                }
-
-                if (draft.type() == CardType.RELATION && isLowSignalRelationCard(back)) {
-                    skippedLowSignalRelations += 1;
                     continue;
                 }
 
@@ -159,6 +160,10 @@ public class IngestionService {
                 }
 
                 cardsCreated += 1;
+
+                if (draft.type() != CardType.RELATION) {
+                    createdStudyCards.add(new GeneratedCardDraft(draft.type(), front, back));
+                }
             }
 
             log.info(
@@ -170,14 +175,45 @@ public class IngestionService {
             );
         }
 
+        boolean deckGraphCreated = persistDeckConceptGraph(deck, createdStudyCards);
+
         log.info(
-            "Ingestion finished for file {}. Created {} cards (skipped {} low-signal relation cards, {} low-quality cards, {} duplicates).",
+            "Ingestion finished for file {}. Created {} cards (deck concept graph stored: {}, skipped {} low-quality cards, {} duplicates).",
             event.fileKey(),
             cardsCreated,
-            skippedLowSignalRelations,
+            deckGraphCreated,
             skippedLowQualityCards,
             skippedDuplicates
         );
+    }
+
+    private boolean persistDeckConceptGraph(DeckEntity deck, List<GeneratedCardDraft> createdStudyCards) {
+        if (createdStudyCards == null || createdStudyCards.isEmpty()) {
+            return false;
+        }
+
+        GeneratedCardDraft conceptGraphDraft = extractionService.buildDeckConceptGraph(createdStudyCards);
+        if (conceptGraphDraft == null) {
+            return false;
+        }
+
+        String graphJson = sanitizeForDatabaseText(conceptGraphDraft.back()).trim();
+        if (graphJson.isBlank() || isLowSignalRelationCard(graphJson)) {
+            return false;
+        }
+
+        int updatedRows = jdbcTemplate.update(
+            """
+                insert into %s (deck_id, graph_json, created_at, updated_at)
+                values (?, ?, now(), now())
+                on conflict (deck_id)
+                do update set graph_json = excluded.graph_json, updated_at = now()
+                """.formatted(deckConceptGraphTable),
+            deck.getId(),
+            graphJson
+        );
+
+        return updatedRows > 0;
     }
 
     private CardEntity persistCardWithInitialState(DeckEntity deck, CardType type, String front, String back) {

@@ -1,7 +1,9 @@
 package com.flashcardengine.backend.persistence.repository;
 
 import com.flashcardengine.backend.persistence.entity.CardEntity;
+import com.flashcardengine.backend.persistence.entity.CardType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -38,4 +40,8 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
         order by c.createdAt asc, c.id asc
         """)
     List<CardEntity> findDeckCards(@Param("deckId") UUID deckId, @Param("userId") UUID userId);
+
+    @Modifying
+    @Query("delete from CardEntity c where c.deck.id = :deckId and c.type = :type")
+    void deleteByDeckIdAndType(@Param("deckId") UUID deckId, @Param("type") CardType type);
 }

@@ -53,6 +53,10 @@ export type DeckAnalytics = {
   dueToday: number;
   heatmap: Array<{ date: string; reviews: number }>;
   decayCurve: Array<{ day: number; retention: number }>;
+  conceptGraph: {
+    nodes: Array<{ id: string }>;
+    links: Array<{ source: string; target: string; label: string }>;
+  };
 };
 
 export type SearchCardResult = {

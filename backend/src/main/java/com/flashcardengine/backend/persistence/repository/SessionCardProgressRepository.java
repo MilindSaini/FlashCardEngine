@@ -21,4 +21,6 @@ public interface SessionCardProgressRepository extends JpaRepository<SessionCard
     List<UUID> findCompletedCardIds(@Param("userId") UUID userId, @Param("deckId") UUID deckId);
 
     void deleteByIdUserIdAndIdDeckId(UUID userId, UUID deckId);
+
+    void deleteByIdUserIdAndIdDeckIdAndIdCardId(UUID userId, UUID deckId, UUID cardId);
 }

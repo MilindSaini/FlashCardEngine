@@ -12,6 +12,10 @@ public interface AIExtractionService {
 
     List<GeneratedCardDraft> extractWorkedExamples(String chunk);
 
+    default GeneratedCardDraft buildDeckConceptGraph(List<GeneratedCardDraft> cards) {
+        return null;
+    }
+
     default List<GeneratedCardDraft> refineDrafts(String chunk, List<GeneratedCardDraft> drafts) {
         return drafts == null ? List.of() : drafts;
     }

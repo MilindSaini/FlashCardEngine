@@ -9,11 +9,21 @@ public record DeckAnalyticsResponse(
     long shakyCards,
     long dueToday,
     List<HeatmapCell> heatmap,
-    List<DecayPoint> decayCurve
+    List<DecayPoint> decayCurve,
+    ConceptGraph conceptGraph
 ) {
     public record HeatmapCell(String date, long reviews) {
     }
 
     public record DecayPoint(int day, double retention) {
+    }
+
+    public record ConceptGraph(List<ConceptNode> nodes, List<ConceptLink> links) {
+    }
+
+    public record ConceptNode(String id) {
+    }
+
+    public record ConceptLink(String source, String target, String label) {
     }
 }

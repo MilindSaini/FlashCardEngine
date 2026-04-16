@@ -42,6 +42,11 @@ public class SessionCardProgressService {
     }
 
     @Transactional
+    public void markCardRemaining(UUID userId, UUID deckId, UUID cardId) {
+        sessionCardProgressRepository.deleteByIdUserIdAndIdDeckIdAndIdCardId(userId, deckId, cardId);
+    }
+
+    @Transactional
     public void clearDeckProgress(UUID userId, UUID deckId) {
         sessionCardProgressRepository.deleteByIdUserIdAndIdDeckId(userId, deckId);
     }

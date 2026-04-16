@@ -65,7 +65,11 @@ public class ReviewService {
         review.setGrade(grade);
         reviewHistoryRepository.save(review);
 
-        sessionCardProgressService.markCardCompleted(userId, card.getDeck().getId(), cardId);
+        if (grade >= 4) {
+            sessionCardProgressService.markCardCompleted(userId, card.getDeck().getId(), cardId);
+        } else {
+            sessionCardProgressService.markCardRemaining(userId, card.getDeck().getId(), cardId);
+        }
         card.getDeck().setLastReviewedAt(Instant.now());
 
         return new ReviewResponse(

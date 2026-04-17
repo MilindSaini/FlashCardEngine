@@ -360,6 +360,85 @@ body {
   padding: 0.2rem 0.48rem;
 }
 
+.dashboard-ingestion-panel h2 {
+  margin-top: 0;
+}
+
+.dashboard-ingestion-list {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.dashboard-ingestion-card {
+  border-radius: 12px;
+  border: 1px solid rgba(18, 47, 72, 0.15);
+  background: rgba(248, 252, 255, 0.9);
+  padding: 0.68rem;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.dashboard-ingestion-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.dashboard-ingestion-head strong {
+  color: #12324d;
+}
+
+.dashboard-ingestion-status {
+  border-radius: 999px;
+  padding: 0.18rem 0.52rem;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.dashboard-ingestion-status.status-queued {
+  color: #0b5b78;
+  background: rgba(14, 165, 233, 0.14);
+  border-color: rgba(14, 165, 233, 0.24);
+}
+
+.dashboard-ingestion-status.status-processing {
+  color: #7a4b05;
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.dashboard-ingestion-status.status-completed {
+  color: #166534;
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.dashboard-ingestion-status.status-failed {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.32);
+}
+
+.dashboard-ingestion-meta {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: rgba(16, 53, 90, 0.82);
+}
+
+.dashboard-ingestion-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
 .dashboard-browse-panel p {
   margin-top: 0;
   color: var(--text-muted);
@@ -1226,35 +1305,6 @@ select:focus {
   0% { opacity: 0; transform: translateX(-110%); }
   30% { opacity: 1; }
   100% { opacity: 0; transform: translateX(110%); }
-}
-
-.heatmap {
-  display: grid;
-  grid-template-columns: repeat(15, 1fr);
-  gap: 4px;
-}
-
-.heat {
-  width: 100%;
-  padding-top: 100%;
-  border-radius: 4px;
-  background: #d6e7ee;
-}
-
-.heat.level-1 {
-  background: #95e6de;
-}
-
-.heat.level-2 {
-  background: #4fd1c5;
-}
-
-.heat.level-3 {
-  background: #14b8a6;
-}
-
-.heat.level-4 {
-  background: #0f766e;
 }
 
 .badge {

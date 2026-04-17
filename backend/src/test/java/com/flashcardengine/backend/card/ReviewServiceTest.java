@@ -8,6 +8,8 @@ import com.flashcardengine.backend.persistence.repository.CardRepository;
 import com.flashcardengine.backend.persistence.repository.CardSm2StateRepository;
 import com.flashcardengine.backend.persistence.repository.ReviewHistoryRepository;
 import com.flashcardengine.backend.persistence.repository.UserRepository;
+import com.flashcardengine.backend.session.SessionCardProgressService;
+import com.flashcardengine.backend.streak.UserStreakService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -40,6 +42,12 @@ class ReviewServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private SessionCardProgressService sessionCardProgressService;
+
+    @Mock
+    private UserStreakService userStreakService;
 
     @Spy
     private Sm2Service sm2Service = new Sm2Service();

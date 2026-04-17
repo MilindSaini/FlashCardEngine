@@ -2,6 +2,7 @@ package com.flashcardengine.backend.ingestion;
 
 import com.flashcardengine.backend.common.SecurityUtils;
 import com.flashcardengine.backend.deck.DeckService;
+import com.flashcardengine.backend.ingestion.dto.IngestionJobStatusResponse;
 import com.flashcardengine.backend.storage.R2StorageService;
 import com.flashcardengine.backend.streak.UserStreakService;
 import org.slf4j.Logger;
@@ -9,6 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -22,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE;
 
 @RestController
@@ -33,6 +37,7 @@ public class UploadController {
     private final SecurityUtils securityUtils;
     private final DeckService deckService;
     private final R2StorageService r2StorageService;
+    private final IngestionJobService ingestionJobService;
     private final ApplicationEventPublisher eventPublisher;
     private final UserStreakService userStreakService;
 
@@ -42,11 +47,13 @@ public class UploadController {
     public UploadController(SecurityUtils securityUtils,
                             DeckService deckService,
                             R2StorageService r2StorageService,
+                            IngestionJobService ingestionJobService,
                             ApplicationEventPublisher eventPublisher,
                             UserStreakService userStreakService) {
         this.securityUtils = securityUtils;
         this.deckService = deckService;
         this.r2StorageService = r2StorageService;
+        this.ingestionJobService = ingestionJobService;
         this.eventPublisher = eventPublisher;
         this.userStreakService = userStreakService;
     }
@@ -68,12 +75,14 @@ public class UploadController {
                 file.getSize()
             );
 
-            eventPublisher.publishEvent(new PdfUploadedEvent(userId, deckId, fileKey));
+            UUID jobId = ingestionJobService.createQueuedJob(userId, deckId, fileKey);
+            eventPublisher.publishEvent(new PdfUploadedEvent(userId, deckId, fileKey, jobId));
             recordActivitySafely(userId);
 
             return Map.of(
+                "jobId", jobId,
                 "file_key", fileKey,
-                "status", "queued",
+                "status", "QUEUED",
                 "message", "Ingestion started"
             );
         } catch (ResponseStatusException ex) {
@@ -81,6 +90,13 @@ public class UploadController {
         } catch (Exception ex) {
             throw new ResponseStatusException(BAD_REQUEST, "Failed to upload PDF");
         }
+    }
+
+    @GetMapping("/jobs/{jobId}")
+    public IngestionJobStatusResponse ingestionJob(@PathVariable UUID jobId) {
+        UUID userId = securityUtils.currentUserId();
+        return ingestionJobService.getJobForUser(userId, jobId)
+            .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Ingestion job not found"));
     }
 
     private void validateFile(MultipartFile file) {

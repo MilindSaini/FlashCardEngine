@@ -45,6 +45,7 @@ public class IngestionService {
     private final ChunkingService chunkingService;
     private final AIExtractionService extractionService;
     private final EmbeddingService embeddingService;
+    private final IngestionJobService ingestionJobService;
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final String cardsTable;
@@ -58,6 +59,7 @@ public class IngestionService {
                             ChunkingService chunkingService,
                             AIExtractionService extractionService,
                             EmbeddingService embeddingService,
+                            IngestionJobService ingestionJobService,
                             JdbcTemplate jdbcTemplate,
                             PlatformTransactionManager transactionManager,
                             @Value("${app.db.schema:flashcard_engine}") String schemaName) {
@@ -69,6 +71,7 @@ public class IngestionService {
         this.chunkingService = chunkingService;
         this.extractionService = extractionService;
         this.embeddingService = embeddingService;
+        this.ingestionJobService = ingestionJobService;
         this.jdbcTemplate = jdbcTemplate;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         SqlSchema schema = SqlSchema.of(schemaName);
@@ -77,114 +80,157 @@ public class IngestionService {
     }
 
     public void processUpload(PdfUploadedEvent event) {
-        DeckEntity deck = deckRepository.findByIdAndUserId(event.deckId(), event.userId())
-            .orElseThrow(() -> new IllegalArgumentException("Deck not found for uploaded file"));
+        ingestionJobService.markProcessing(event.jobId(), "extracting_pdf");
 
-        String extractedText;
-        try (InputStream inputStream = r2StorageService.downloadPdf(event.fileKey())) {
-            extractedText = pdfTextExtractor.extractText(inputStream);
-        } catch (Exception ex) {
-            throw new IllegalStateException("Failed to read uploaded PDF", ex);
-        }
+        try {
+            DeckEntity deck = deckRepository.findByIdAndUserId(event.deckId(), event.userId())
+                .orElseThrow(() -> new IllegalArgumentException("Deck not found for uploaded file"));
 
-        String sanitizedExtractedText = sanitizeForDatabaseText(extractedText);
-        int removedChars = extractedText.length() - sanitizedExtractedText.length();
-        if (removedChars > 0) {
-            log.info("Removed {} unsafe characters from extracted PDF text for file {}", removedChars, event.fileKey());
-        }
-
-        log.info("Extracted {} characters from uploaded PDF {}", sanitizedExtractedText.length(), event.fileKey());
-
-        List<String> chunks = chunkingService.splitByApproxTokens(sanitizedExtractedText, 1000);
-        log.info("Created {} ingestion chunks for file {}", chunks.size(), event.fileKey());
-        if (chunks.isEmpty()) {
-            log.info("No text chunks created for file {}", event.fileKey());
-            return;
-        }
-
-        transactionTemplate.execute(status -> {
-            cardRepository.deleteByDeckIdAndType(deck.getId(), CardType.RELATION);
-            return null;
-        });
-
-        int cardsCreated = 0;
-        int skippedLowQualityCards = 0;
-        int skippedDuplicates = 0;
-        Set<String> seenCards = new HashSet<>();
-        List<GeneratedCardDraft> createdStudyCards = new ArrayList<>();
-
-        for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
-            String chunk = chunks.get(chunkIndex);
-
-            List<GeneratedCardDraft> rawDrafts = new ArrayList<>();
-            rawDrafts.addAll(extractionService.extractDefinitions(chunk));
-            rawDrafts.addAll(extractionService.extractEdgeCases(chunk));
-            rawDrafts.addAll(extractionService.extractWorkedExamples(chunk));
-
-            List<GeneratedCardDraft> drafts = extractionService.refineDrafts(chunk, rawDrafts);
-
-            for (GeneratedCardDraft draft : drafts) {
-                String front = sanitizeForDatabaseText(draft.front()).trim();
-                String back = sanitizeForDatabaseText(draft.back()).trim();
-
-                if (front.isBlank() || back.isBlank()) {
-                    skippedLowQualityCards += 1;
-                    continue;
-                }
-
-                if (isLowQualityCard(draft.type(), front, back)) {
-                    skippedLowQualityCards += 1;
-                    continue;
-                }
-
-                String fingerprint = buildCardFingerprint(draft.type(), front, back);
-                if (!seenCards.add(fingerprint)) {
-                    skippedDuplicates += 1;
-                    continue;
-                }
-
-                CardEntity savedCard = persistCardWithInitialState(deck, draft.type(), front, back);
-
-                try {
-                    List<Double> embedding = embeddingService.generateEmbedding(savedCard.getFront() + "\n" + savedCard.getBack());
-                    jdbcTemplate.update(
-                        "update %s set embedding = ?::vector where id = ?".formatted(cardsTable),
-                        embeddingService.toPgVectorLiteral(embedding),
-                        savedCard.getId()
-                    );
-                } catch (Exception ex) {
-                    log.warn("Failed to store embedding for card {} in deck {}; continuing without embedding",
-                        savedCard.getId(),
-                        deck.getId(),
-                        ex);
-                }
-
-                cardsCreated += 1;
-
-                if (draft.type() != CardType.RELATION) {
-                    createdStudyCards.add(new GeneratedCardDraft(draft.type(), front, back));
-                }
+            String extractedText;
+            try (InputStream inputStream = r2StorageService.downloadPdf(event.fileKey())) {
+                extractedText = pdfTextExtractor.extractText(inputStream);
+            } catch (Exception ex) {
+                throw new IllegalStateException("Failed to read uploaded PDF", ex);
             }
 
-            log.info(
-                "Processed chunk {}/{} for file {}. Cards available so far: {}",
-                chunkIndex + 1,
-                chunks.size(),
-                event.fileKey(),
-                cardsCreated
+            String sanitizedExtractedText = sanitizeForDatabaseText(extractedText);
+            int removedChars = extractedText.length() - sanitizedExtractedText.length();
+            if (removedChars > 0) {
+                log.info("Removed {} unsafe characters from extracted PDF text for file {}", removedChars, event.fileKey());
+            }
+
+            log.info("Extracted {} characters from uploaded PDF {}", sanitizedExtractedText.length(), event.fileKey());
+
+            List<String> chunks = chunkingService.splitByApproxTokens(sanitizedExtractedText, 1000);
+            int totalChunks = chunks.size();
+            log.info("Created {} ingestion chunks for file {}", totalChunks, event.fileKey());
+            if (chunks.isEmpty()) {
+                ingestionJobService.markCompleted(event.jobId(), "completed_no_chunks", 0, 0, 0, 0, 0);
+                log.info("No text chunks created for file {}", event.fileKey());
+                return;
+            }
+
+            ingestionJobService.updateProgress(event.jobId(), "extracting_cards", totalChunks, 0, 0, 0, 0);
+
+            transactionTemplate.execute(status -> {
+                cardRepository.deleteByDeckIdAndType(deck.getId(), CardType.RELATION);
+                return null;
+            });
+
+            int cardsCreated = 0;
+            int skippedLowQualityCards = 0;
+            int skippedDuplicates = 0;
+            Set<String> seenCards = new HashSet<>();
+            List<GeneratedCardDraft> createdStudyCards = new ArrayList<>();
+
+            for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
+                String chunk = chunks.get(chunkIndex);
+
+                List<GeneratedCardDraft> rawDrafts = new ArrayList<>();
+                rawDrafts.addAll(extractionService.extractDefinitions(chunk));
+                rawDrafts.addAll(extractionService.extractRelationships(chunk));
+                rawDrafts.addAll(extractionService.extractEdgeCases(chunk));
+                rawDrafts.addAll(extractionService.extractWorkedExamples(chunk));
+
+                List<GeneratedCardDraft> drafts = extractionService.refineDrafts(chunk, rawDrafts);
+
+                for (GeneratedCardDraft draft : drafts) {
+                    String front = sanitizeForDatabaseText(draft.front()).trim();
+                    String back = sanitizeForDatabaseText(draft.back()).trim();
+
+                    if (front.isBlank() || back.isBlank()) {
+                        skippedLowQualityCards += 1;
+                        continue;
+                    }
+
+                    if (isLowQualityCard(draft.type(), front, back)) {
+                        skippedLowQualityCards += 1;
+                        continue;
+                    }
+
+                    String fingerprint = buildCardFingerprint(draft.type(), front, back);
+                    if (!seenCards.add(fingerprint)) {
+                        skippedDuplicates += 1;
+                        continue;
+                    }
+
+                    CardEntity savedCard = persistCardWithInitialState(deck, draft.type(), front, back);
+
+                    try {
+                        List<Double> embedding = embeddingService.generateEmbedding(savedCard.getFront() + "\n" + savedCard.getBack());
+                        jdbcTemplate.update(
+                            "update %s set embedding = ?::vector where id = ?".formatted(cardsTable),
+                            embeddingService.toPgVectorLiteral(embedding),
+                            savedCard.getId()
+                        );
+                    } catch (Exception ex) {
+                        log.warn("Failed to store embedding for card {} in deck {}; continuing without embedding",
+                            savedCard.getId(),
+                            deck.getId(),
+                            ex);
+                    }
+
+                    cardsCreated += 1;
+
+                    if (draft.type() != CardType.RELATION) {
+                        createdStudyCards.add(new GeneratedCardDraft(draft.type(), front, back));
+                    }
+                }
+
+                int processedChunks = chunkIndex + 1;
+                ingestionJobService.updateProgress(
+                    event.jobId(),
+                    "extracting_cards",
+                    totalChunks,
+                    processedChunks,
+                    cardsCreated,
+                    skippedLowQualityCards,
+                    skippedDuplicates
+                );
+
+                log.info(
+                    "Processed chunk {}/{} for file {}. Cards available so far: {}",
+                    processedChunks,
+                    totalChunks,
+                    event.fileKey(),
+                    cardsCreated
+                );
+            }
+
+            ingestionJobService.updateProgress(
+                event.jobId(),
+                "persisting_concept_graph",
+                totalChunks,
+                totalChunks,
+                cardsCreated,
+                skippedLowQualityCards,
+                skippedDuplicates
             );
+
+            boolean deckGraphCreated = persistDeckConceptGraph(deck, createdStudyCards);
+
+            ingestionJobService.markCompleted(
+                event.jobId(),
+                deckGraphCreated ? "completed_with_graph" : "completed",
+                totalChunks,
+                totalChunks,
+                cardsCreated,
+                skippedLowQualityCards,
+                skippedDuplicates
+            );
+
+            log.info(
+                "Ingestion finished for file {}. Created {} cards (deck concept graph stored: {}, skipped {} low-quality cards, {} duplicates).",
+                event.fileKey(),
+                cardsCreated,
+                deckGraphCreated,
+                skippedLowQualityCards,
+                skippedDuplicates
+            );
+        } catch (Exception ex) {
+            ingestionJobService.markFailed(event.jobId(), ex.getMessage());
+            throw ex;
         }
-
-        boolean deckGraphCreated = persistDeckConceptGraph(deck, createdStudyCards);
-
-        log.info(
-            "Ingestion finished for file {}. Created {} cards (deck concept graph stored: {}, skipped {} low-quality cards, {} duplicates).",
-            event.fileKey(),
-            cardsCreated,
-            deckGraphCreated,
-            skippedLowQualityCards,
-            skippedDuplicates
-        );
     }
 
     private boolean persistDeckConceptGraph(DeckEntity deck, List<GeneratedCardDraft> createdStudyCards) {

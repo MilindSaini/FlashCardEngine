@@ -22,6 +22,31 @@ export type DeckDeleteResponse = {
   deckId: string;
 };
 
+export type IngestionUploadResponse = {
+  jobId: string;
+  file_key: string;
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
+  message: string;
+};
+
+export type IngestionJobStatus = {
+  jobId: string;
+  deckId: string;
+  fileKey: string;
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
+  stage: string;
+  totalChunks: number;
+  processedChunks: number;
+  cardsCreated: number;
+  skippedLowQualityCards: number;
+  skippedDuplicates: number;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+};
+
 export type UserStreakStats = {
   currentStreakDays: number;
   longestStreakDays: number;
@@ -66,8 +91,6 @@ export type DeckAnalytics = {
   masteredCards: number;
   shakyCards: number;
   dueToday: number;
-  heatmap: Array<{ date: string; reviews: number }>;
-  decayCurve: Array<{ day: number; retention: number }>;
   conceptGraph: {
     nodes: Array<{ id: string }>;
     links: Array<{ source: string; target: string; label: string }>;

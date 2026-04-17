@@ -5,6 +5,7 @@ import java.util.UUID;
 public record PdfUploadedEvent(
     UUID userId,
     UUID deckId,
-    String fileKey
+    String fileKey,
+    UUID jobId
 ) {
 }

@@ -8,16 +8,8 @@ public record DeckAnalyticsResponse(
     long masteredCards,
     long shakyCards,
     long dueToday,
-    List<HeatmapCell> heatmap,
-    List<DecayPoint> decayCurve,
     ConceptGraph conceptGraph
 ) {
-    public record HeatmapCell(String date, long reviews) {
-    }
-
-    public record DecayPoint(int day, double retention) {
-    }
-
     public record ConceptGraph(List<ConceptNode> nodes, List<ConceptLink> links) {
     }
 

@@ -4,6 +4,8 @@ import {
   DeckAnalytics,
   DeckSummary,
   DueCard,
+  IngestionJobStatus,
+  IngestionUploadResponse,
   ReviewResponse,
   SearchResponse,
   SessionState,
@@ -159,12 +161,21 @@ export const apiClient = {
     formData.append("deckId", normalizedDeckId);
     formData.append("file", file);
 
-    return request<{ file_key: string; status: string; message: string }>(
+    return request<IngestionUploadResponse>(
       `/api/ingestion/upload?deckId=${encodeURIComponent(normalizedDeckId)}`,
       {
         method: "POST",
         body: formData,
       },
+      assertToken(token)
+    );
+  },
+
+  getIngestionJob: (jobId: string, token: string) => {
+    const normalizedJobId = assertUuid(jobId, "ingestion job id");
+    return request<IngestionJobStatus>(
+      `/api/ingestion/jobs/${encodeURIComponent(normalizedJobId)}`,
+      {},
       assertToken(token)
     );
   },

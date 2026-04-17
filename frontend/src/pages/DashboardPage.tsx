@@ -1,9 +1,9 @@
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import { apiClient } from "../api/client";
-import { DeckSummary } from "../api/types";
+import { DeckSummary, IngestionJobStatus } from "../api/types";
 import { useAuthStore } from "../store/authStore";
 import {
   isValidUuid,
@@ -17,6 +17,24 @@ import {
 const DECKS_PER_PAGE = 9;
 
 type DeckSortMode = "due" | "recent" | "mastery" | "shaky" | "title" | "created";
+type IngestionJobRef = {
+  deckId: string;
+  jobId: string;
+  status: IngestionJobStatus["status"];
+};
+
+function ingestionProgressPercent(job: IngestionJobStatus | undefined) {
+  if (!job) {
+    return 0;
+  }
+  if (job.status === "COMPLETED") {
+    return 100;
+  }
+  if (job.totalChunks <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round((job.processedChunks / job.totalChunks) * 100)));
+}
 
 function deckFocusMessage(deck: DeckSummary) {
   if (deck.totalCards === 0) {
@@ -114,9 +132,11 @@ export function DashboardPage() {
   const [deckSortMode, setDeckSortMode] = useState<DeckSortMode>("due");
   const [deckPage, setDeckPage] = useState(1);
   const [activeDeckMenuId, setActiveDeckMenuId] = useState<string | null>(null);
+  const [ingestionJobs, setIngestionJobs] = useState<IngestionJobRef[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"fulltext" | "semantic">("fulltext");
   const [searchDeckId, setSearchDeckId] = useState<string>("all");
+  const ingestionNoticeJobIdsRef = useRef<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -148,8 +168,14 @@ export function DashboardPage() {
   const uploadMutation = useMutation({
     mutationFn: ({ deckId, file }: { deckId: string; file: File }) =>
       apiClient.uploadPdf(deckId, file, token as string),
-    onSuccess: () => {
+    onSuccess: (response, variables) => {
       toast.success("Upload accepted. Card generation has started.");
+      if (isValidUuid(response.jobId)) {
+        setIngestionJobs((previous) => {
+          const deduped = previous.filter((job) => job.jobId !== response.jobId);
+          return [{ deckId: variables.deckId, jobId: response.jobId, status: response.status }, ...deduped].slice(0, 8);
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ["decks"] });
       queryClient.invalidateQueries({ queryKey: ["my-streak"] });
     },
@@ -186,6 +212,20 @@ export function DashboardPage() {
     enabled: Boolean(token) && !searchValidationError && normalizedSearchQuery.trim().length >= 2,
   });
 
+  const ingestionJobQueries = useQueries({
+    queries: ingestionJobs.map((job) => ({
+      queryKey: ["ingestion-job", job.jobId],
+      queryFn: () => apiClient.getIngestionJob(job.jobId, token as string),
+      enabled: Boolean(token),
+      refetchInterval:
+        job.status === "QUEUED" || job.status === "PROCESSING"
+          ? 2000
+          : false,
+      refetchIntervalInBackground: true,
+      staleTime: 0,
+    })),
+  });
+
   useEffect(() => {
     if (decksQuery.isError) {
       toast.error("Could not load your decks. Please refresh and try again.", { id: "decks-load-error" });
@@ -220,6 +260,50 @@ export function DashboardPage() {
     () => new Map(decks.map((deck) => [deck.id, deck])),
     [decks]
   );
+
+  useEffect(() => {
+    setIngestionJobs((previous) => {
+      let changed = false;
+      const next = previous.map((job, index) => {
+        const status = ingestionJobQueries[index]?.data?.status;
+        if (!status || status === job.status) {
+          return job;
+        }
+
+        changed = true;
+        return { ...job, status };
+      });
+
+      return changed ? next : previous;
+    });
+
+    ingestionJobQueries.forEach((query, index) => {
+      const job = ingestionJobs[index];
+      const data = query.data;
+
+      if (!job || !data) {
+        return;
+      }
+
+      if (ingestionNoticeJobIdsRef.current.has(data.jobId)) {
+        return;
+      }
+
+      if (data.status === "COMPLETED") {
+        ingestionNoticeJobIdsRef.current.add(data.jobId);
+        toast.success(`Ingestion completed for ${deckById.get(job.deckId)?.title ?? "your deck"}.`);
+        queryClient.invalidateQueries({ queryKey: ["decks"] });
+        return;
+      }
+
+      if (data.status === "FAILED") {
+        ingestionNoticeJobIdsRef.current.add(data.jobId);
+        toast.error(data.errorMessage || "Ingestion failed. Please retry this upload.", {
+          id: `ingestion-failed-${data.jobId}`,
+        });
+      }
+    });
+  }, [deckById, ingestionJobQueries, ingestionJobs, queryClient]);
 
   const filteredAndSortedDecks = useMemo(() => {
     const normalizedFilter = normalizeSearchQuery(deckFilterQuery).toLowerCase();
@@ -403,6 +487,51 @@ export function DashboardPage() {
           />
         </div>
         <p className="deck-focus-note">{overallMessage}</p>
+      </section>
+
+      <section className="surface dashboard-ingestion-panel">
+        <h2>Ingestion Queue</h2>
+        {ingestionJobs.length === 0 && <p className="deck-focus-note">No active ingestion jobs.</p>}
+
+        {ingestionJobs.length > 0 && (
+          <div className="dashboard-ingestion-list">
+            {ingestionJobs.map((job, index) => {
+              const jobQuery = ingestionJobQueries[index];
+              const jobData = jobQuery?.data;
+              const deckTitle = deckById.get(job.deckId)?.title ?? "Deck";
+              const progressPercent = ingestionProgressPercent(jobData);
+              const stage = jobData?.stage?.replaceAll("_", " ") ?? "queued";
+              const status = jobData?.status ?? job.status;
+
+              return (
+                <article key={job.jobId} className="dashboard-ingestion-card">
+                  <div className="dashboard-ingestion-head">
+                    <strong>{deckTitle}</strong>
+                    <span className={`dashboard-ingestion-status status-${status.toLowerCase()}`}>{status}</span>
+                  </div>
+
+                  <p className="deck-focus-note">Stage: {stage}</p>
+
+                  <div className="deck-progress-track" aria-label={`Ingestion progress for ${deckTitle}`}>
+                    <div className="deck-progress-fill" style={{ width: `${progressPercent}%` }} />
+                  </div>
+
+                  <div className="dashboard-ingestion-meta">
+                    <span>
+                      Chunks: {jobData?.processedChunks ?? 0}
+                      {jobData?.totalChunks ? ` / ${jobData.totalChunks}` : ""}
+                    </span>
+                    <span>Cards: {jobData?.cardsCreated ?? 0}</span>
+                  </div>
+
+                  {jobData?.errorMessage && (
+                    <p className="dashboard-ingestion-error">{jobData.errorMessage}</p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section className="surface dashboard-search-panel">

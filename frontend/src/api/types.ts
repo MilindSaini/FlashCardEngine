@@ -17,6 +17,20 @@ export type DeckSummary = {
   masteryPercent: number;
 };
 
+export type DeckDeleteResponse = {
+  status: string;
+  deckId: string;
+};
+
+export type UserStreakStats = {
+  currentStreakDays: number;
+  longestStreakDays: number;
+  totalLogins: number;
+  totalActions: number;
+  lastLoginDate: string | null;
+  lastActivityDate: string | null;
+};
+
 export type DueCard = {
   id: string;
   type: "QA" | "DEFINITION" | "RELATION" | "EDGE_CASE" | "EXAMPLE";

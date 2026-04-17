@@ -7,7 +7,6 @@ import { apiClient } from "../api/client";
 import { DueCard, ReviewResponse } from "../api/types";
 import { CardFlip } from "../components/CardFlip";
 import { useAuthStore } from "../store/authStore";
-import { useStreakStore } from "../store/streakStore";
 import { isValidUuid, validateReviewGrade } from "../types/validation";
 
 type SessionMode = "due" | "all";
@@ -95,10 +94,9 @@ function milestoneMessage(milestone: number) {
 
 export function ReviewSessionPage() {
   const token = useAuthStore((state) => state.token);
-  const userId = useAuthStore((state) => state.userId);
-  const registerActivity = useStreakStore((state) => state.registerActivity);
   const { deckId, cardId } = useParams<{ deckId: string; cardId?: string }>();
   const hasValidDeckId = isValidUuid(deckId);
+  const routeCardId = cardId && isValidUuid(cardId) ? cardId : null;
   const navigate = useNavigate();
   const [cards, setCards] = useState<DueCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -381,9 +379,6 @@ export function ReviewSessionPage() {
       return apiClient.resetSessionProgress(deckId, token as string);
     },
     onSuccess: () => {
-      if (userId) {
-        registerActivity(userId);
-      }
       toast.success("Deck progress restarted.");
       reviewedCardIdsRef.current = new Set();
       leitnerBoxesRef.current = {};
@@ -407,6 +402,7 @@ export function ReviewSessionPage() {
       void sessionQuery.refetch();
       void dueCardsQuery.refetch();
       void deckCardsQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["my-streak"] });
     },
     onError: () => {
       toast.error("Could not restart deck progress right now.", { id: "review-reset-error" });
@@ -453,10 +449,10 @@ export function ReviewSessionPage() {
     setCurrentIndex(Math.max(0, sessionQuery.data.currentCardIndex));
     setCompletedCount(Math.max(0, completedCardIds.length));
     setTotalCount(Math.max(0, sessionQuery.data.totalCards));
-    setSessionMode(sessionQuery.data.allCardsMode ? "all" : "due");
+    setSessionMode(routeCardId ? "all" : sessionQuery.data.allCardsMode ? "all" : "due");
     setSessionHydrated(true);
     skipNextSessionPersistRef.current = true;
-  }, [sessionQuery.data, sessionHydrated]);
+  }, [sessionQuery.data, sessionHydrated, routeCardId]);
 
   useEffect(() => {
     if (!sessionHydrated || !deckCardsQuery.data) {
@@ -469,7 +465,7 @@ export function ReviewSessionPage() {
   }, [deckCardsQuery.data, sessionHydrated]);
 
   useEffect(() => {
-    if (!sessionHydrated || sessionMode !== "due" || !dueCardsQuery.data) {
+    if (!sessionHydrated || sessionMode !== "due" || Boolean(routeCardId) || !dueCardsQuery.data) {
       return;
     }
 
@@ -503,7 +499,7 @@ export function ReviewSessionPage() {
 
       return hasNewCard ? merged : previous;
     });
-  }, [dueCardsQuery.data, deckId, sessionHydrated, sessionMode]);
+  }, [dueCardsQuery.data, deckId, sessionHydrated, sessionMode, routeCardId]);
 
   useEffect(() => {
     if (!sessionHydrated || sessionMode !== "all" || !deckCardsQuery.data) {
@@ -512,7 +508,9 @@ export function ReviewSessionPage() {
 
     setCards((previous) => {
       if (previous.length === 0) {
-        const visibleCards = deckCardsQuery.data.filter((card) => !reviewedCardIdsRef.current.has(card.id));
+        const visibleCards = deckCardsQuery.data.filter(
+          (card) => card.id === routeCardId || !reviewedCardIdsRef.current.has(card.id)
+        );
         return visibleCards.length > 0 ? visibleCards : previous;
       }
 
@@ -521,7 +519,10 @@ export function ReviewSessionPage() {
       let hasNewCard = false;
 
       for (const incoming of deckCardsQuery.data) {
-        if (existingIds.has(incoming.id) || reviewedCardIdsRef.current.has(incoming.id)) {
+        if (
+          existingIds.has(incoming.id) ||
+          (incoming.id !== routeCardId && reviewedCardIdsRef.current.has(incoming.id))
+        ) {
           continue;
         }
         merged.push(incoming);
@@ -531,7 +532,7 @@ export function ReviewSessionPage() {
 
       return hasNewCard ? merged : previous;
     });
-  }, [deckCardsQuery.data, sessionHydrated, sessionMode]);
+  }, [deckCardsQuery.data, sessionHydrated, sessionMode, routeCardId]);
 
   useEffect(() => {
     if (!sessionHydrated || !deckId || !token) {
@@ -603,6 +604,12 @@ export function ReviewSessionPage() {
     }
 
     if (cards.length === 0) {
+      const waitingForDeckCards = deckCardsQuery.isLoading || deckCardsQuery.isFetching;
+      const waitingForDueCards = sessionMode === "due" && (dueCardsQuery.isLoading || dueCardsQuery.isFetching);
+      if (waitingForDeckCards || waitingForDueCards) {
+        return;
+      }
+
       if (cardId) {
         syncReviewRoute(null);
       }
@@ -617,7 +624,19 @@ export function ReviewSessionPage() {
     if (cardId !== nextCard.id) {
       syncReviewRoute(nextCard.id);
     }
-  }, [sessionHydrated, deckId, cards, currentIndex, cardId, syncReviewRoute]);
+  }, [
+    sessionHydrated,
+    deckId,
+    cards,
+    currentIndex,
+    cardId,
+    syncReviewRoute,
+    deckCardsQuery.isLoading,
+    deckCardsQuery.isFetching,
+    dueCardsQuery.isLoading,
+    dueCardsQuery.isFetching,
+    sessionMode,
+  ]);
 
   const goPrevious = useMemo(
     () => () => {
@@ -670,9 +689,6 @@ export function ReviewSessionPage() {
       return apiClient.submitReview(cardId, grade, token as string);
     },
     onSuccess: async (response, variables) => {
-      if (userId) {
-        registerActivity(userId);
-      }
       triggerGradeAnimation(variables.grade, response.mastered);
       setLastReview(response);
       setFlipped(false);
@@ -744,6 +760,7 @@ export function ReviewSessionPage() {
       setCompletedCount(nextCompleted);
       setTotalCount(nextTotal);
       queryClient.invalidateQueries({ queryKey: ["decks"] });
+      queryClient.invalidateQueries({ queryKey: ["my-streak"] });
       void queryClient.refetchQueries({ queryKey: ["decks"], type: "active" });
     },
     onError: () => {

@@ -1,11 +1,10 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import { apiClient } from "../api/client";
 import { DeckSummary } from "../api/types";
 import { useAuthStore } from "../store/authStore";
-import { useStreakStore } from "../store/streakStore";
 import {
   isValidUuid,
   normalizeDeckTitle,
@@ -14,6 +13,10 @@ import {
   validatePdfFile,
   validateSearchQuery,
 } from "../types/validation";
+
+const DECKS_PER_PAGE = 9;
+
+type DeckSortMode = "due" | "recent" | "mastery" | "shaky" | "title" | "created";
 
 function deckFocusMessage(deck: DeckSummary) {
   if (deck.totalCards === 0) {
@@ -76,14 +79,47 @@ function nextReviewDateLabel(nextReviewDate: string | null) {
   return nextDate.toLocaleDateString();
 }
 
+function normalizeTypeLabel(value: string) {
+  return value
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function compareDecks(sortMode: DeckSortMode, left: DeckSummary, right: DeckSummary) {
+  const leftLastReviewed = left.lastReviewedAt ? new Date(left.lastReviewedAt).getTime() : 0;
+  const rightLastReviewed = right.lastReviewedAt ? new Date(right.lastReviewedAt).getTime() : 0;
+
+  switch (sortMode) {
+    case "recent":
+      return rightLastReviewed - leftLastReviewed;
+    case "mastery":
+      return right.masteryPercent - left.masteryPercent;
+    case "shaky":
+      return right.shakyCards - left.shakyCards;
+    case "title":
+      return left.title.localeCompare(right.title);
+    case "created":
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    case "due":
+    default:
+      return right.dueToday - left.dueToday;
+  }
+}
+
 export function DashboardPage() {
   const token = useAuthStore((state) => state.token);
-  const userId = useAuthStore((state) => state.userId);
-  const registerActivity = useStreakStore((state) => state.registerActivity);
   const [title, setTitle] = useState("");
+  const [deckFilterQuery, setDeckFilterQuery] = useState("");
+  const [deckSortMode, setDeckSortMode] = useState<DeckSortMode>("due");
+  const [deckPage, setDeckPage] = useState(1);
+  const [activeDeckMenuId, setActiveDeckMenuId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"fulltext" | "semantic">("fulltext");
+  const [searchDeckId, setSearchDeckId] = useState<string>("all");
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
   const normalizedSearchQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
   const searchValidationError = useMemo(
     () => validateSearchQuery(normalizedSearchQuery),
@@ -99,12 +135,10 @@ export function DashboardPage() {
   const createDeckMutation = useMutation({
     mutationFn: (normalizedTitle: string) => apiClient.createDeck(normalizedTitle, token as string),
     onSuccess: () => {
-      if (userId) {
-        registerActivity(userId);
-      }
       toast.success("Deck created successfully.");
       setTitle("");
       queryClient.invalidateQueries({ queryKey: ["decks"] });
+      queryClient.invalidateQueries({ queryKey: ["my-streak"] });
     },
     onError: () => {
       toast.error("Could not create the deck right now. Please try again.", { id: "create-deck-error" });
@@ -115,20 +149,40 @@ export function DashboardPage() {
     mutationFn: ({ deckId, file }: { deckId: string; file: File }) =>
       apiClient.uploadPdf(deckId, file, token as string),
     onSuccess: () => {
-      if (userId) {
-        registerActivity(userId);
-      }
       toast.success("Upload accepted. Card generation has started.");
       queryClient.invalidateQueries({ queryKey: ["decks"] });
+      queryClient.invalidateQueries({ queryKey: ["my-streak"] });
     },
     onError: () => {
       toast.error("Upload failed. Please try another file or retry.", { id: "upload-error" });
     },
   });
 
+  const deleteDeckMutation = useMutation({
+    mutationFn: (deckId: string) => apiClient.deleteDeck(deckId, token as string),
+    onSuccess: (_response, deckId) => {
+      setActiveDeckMenuId(null);
+      if (searchDeckId === deckId) {
+        setSearchDeckId("all");
+      }
+      toast.success("Deck deleted permanently.");
+      queryClient.invalidateQueries({ queryKey: ["decks"] });
+      queryClient.invalidateQueries({ queryKey: ["my-streak"] });
+    },
+    onError: () => {
+      toast.error("Could not delete this deck right now. Please retry.", { id: "delete-deck-error" });
+    },
+  });
+
   const searchQueryResult = useQuery({
-    queryKey: ["deck-search", normalizedSearchQuery, searchMode],
-    queryFn: () => apiClient.search(normalizedSearchQuery, searchMode, token as string),
+    queryKey: ["deck-search", normalizedSearchQuery, searchMode, searchDeckId],
+    queryFn: () =>
+      apiClient.search(
+        normalizedSearchQuery,
+        searchMode,
+        token as string,
+        searchDeckId === "all" ? undefined : searchDeckId
+      ),
     enabled: Boolean(token) && !searchValidationError && normalizedSearchQuery.trim().length >= 2,
   });
 
@@ -144,7 +198,54 @@ export function DashboardPage() {
     }
   }, [normalizedSearchQuery, searchQueryResult.isError]);
 
+  useEffect(() => {
+    const onWindowClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".deck-menu")) {
+        setActiveDeckMenuId(null);
+      }
+    };
+
+    window.addEventListener("click", onWindowClick);
+    return () => window.removeEventListener("click", onWindowClick);
+  }, []);
+
+  useEffect(() => {
+    setDeckPage(1);
+  }, [deckFilterQuery, deckSortMode]);
+
   const decks = decksQuery.data ?? [];
+
+  const deckById = useMemo(
+    () => new Map(decks.map((deck) => [deck.id, deck])),
+    [decks]
+  );
+
+  const filteredAndSortedDecks = useMemo(() => {
+    const normalizedFilter = normalizeSearchQuery(deckFilterQuery).toLowerCase();
+    const filtered = normalizedFilter
+      ? decks.filter((deck) => deck.title.toLowerCase().includes(normalizedFilter))
+      : decks;
+
+    return [...filtered].sort((left, right) => compareDecks(deckSortMode, left, right));
+  }, [decks, deckFilterQuery, deckSortMode]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAndSortedDecks.length / DECKS_PER_PAGE));
+  const currentPage = Math.min(deckPage, totalPages);
+
+  useEffect(() => {
+    if (deckPage > totalPages) {
+      setDeckPage(totalPages);
+    }
+  }, [deckPage, totalPages]);
+
+  const pagedDecks = useMemo(() => {
+    const start = (currentPage - 1) * DECKS_PER_PAGE;
+    return filteredAndSortedDecks.slice(start, start + DECKS_PER_PAGE);
+  }, [currentPage, filteredAndSortedDecks]);
+
+  const showingFrom = filteredAndSortedDecks.length === 0 ? 0 : (currentPage - 1) * DECKS_PER_PAGE + 1;
+  const showingTo = Math.min(currentPage * DECKS_PER_PAGE, filteredAndSortedDecks.length);
 
   const onCreateDeck = () => {
     const normalizedTitle = normalizeDeckTitle(title);
@@ -190,6 +291,38 @@ export function DashboardPage() {
     queryClient.removeQueries({ queryKey: ["deck-cards", deckId] });
   };
 
+  const onDeleteDeck = (deck: DeckSummary) => {
+    if (!isValidUuid(deck.id)) {
+      toast.error("Invalid deck id. Please refresh and try again.", { id: "delete-deck-validation" });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete deck \"${deck.title}\" permanently? This removes all cards, progress, and analytics for this deck.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    deleteDeckMutation.mutate(deck.id);
+  };
+
+  const onOpenSearchDeck = (deckId: string) => {
+    onResumeDeck(deckId);
+    navigate(`/review/${deckId}`);
+  };
+
+  const onOpenSearchCard = (deckId: string, cardId: string) => {
+    if (!isValidUuid(deckId) || !isValidUuid(cardId)) {
+      toast.error("Search result link is invalid. Please try another result.", { id: "search-open-invalid" });
+      return;
+    }
+
+    onResumeDeck(deckId);
+    navigate(`/review/${deckId}/${cardId}`);
+  };
+
   const deckCountLabel = useMemo(() => `${decks.length} deck${decks.length === 1 ? "" : "s"}`, [decks.length]);
 
   const overallSnapshot = useMemo(() => {
@@ -219,9 +352,13 @@ export function DashboardPage() {
     ? "Could not create the deck. Please try again."
     : uploadMutation.isError
       ? "Upload could not be completed. Please retry."
-      : decksQuery.isError
-        ? "Dashboard data could not be loaded. Please refresh."
-        : null;
+      : deleteDeckMutation.isError
+        ? "Deck could not be deleted right now."
+        : decksQuery.isError
+          ? "Dashboard data could not be loaded. Please refresh."
+          : null;
+
+  const searchResults = searchQueryResult.data?.results ?? [];
 
   return (
     <div className="grid">
@@ -270,41 +407,142 @@ export function DashboardPage() {
 
       <section className="surface dashboard-search-panel">
         <h2>Card Search</h2>
-        <div className="row">
+        <div className="dashboard-search-shell" role="search">
+          <span className="dashboard-search-icon" aria-hidden="true">Search</span>
           <input
+            className="dashboard-search-input"
             value={searchQuery}
             onChange={(event) => setSearchQuery(normalizeSearchQuery(event.target.value))}
-            placeholder="Search by phrase or concept"
+            placeholder="Ask a concept or phrase"
             maxLength={160}
             spellCheck={false}
           />
-          <select value={searchMode} onChange={(event) => setSearchMode(event.target.value as "fulltext" | "semantic") }>
-            <option value="fulltext">Full-text</option>
-            <option value="semantic">Semantic</option>
-          </select>
+          {normalizedSearchQuery.trim().length > 0 && (
+            <button
+              type="button"
+              className="dashboard-search-clear"
+              onClick={() => setSearchQuery("")}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="dashboard-search-controls">
+          <label>
+            <span>Mode</span>
+            <select value={searchMode} onChange={(event) => setSearchMode(event.target.value as "fulltext" | "semantic") }>
+              <option value="fulltext">Full-text</option>
+              <option value="semantic">Semantic</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Deck Scope</span>
+            <select value={searchDeckId} onChange={(event) => setSearchDeckId(event.target.value)}>
+              <option value="all">All decks</option>
+              {decks.map((deck) => (
+                <option key={deck.id} value={deck.id}>{deck.title}</option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {searchValidationError && normalizedSearchQuery.trim().length > 0 && (
           <p className="deck-focus-note">{searchValidationError}</p>
         )}
 
-        {searchQueryResult.isSuccess && (
-          <div className="grid" style={{ marginTop: "0.8rem" }}>
-            {searchQueryResult.data.results.slice(0, 6).map((result) => (
-              <article key={result.cardId} style={{ borderTop: "1px solid rgba(18, 32, 44, 0.16)", paddingTop: "0.6rem" }}>
-                <strong>{result.front}</strong>
+        {searchQueryResult.isFetching && normalizedSearchQuery.trim().length >= 2 && (
+          <p className="deck-focus-note">Searching cards...</p>
+        )}
+
+        {searchQueryResult.isSuccess && searchResults.length === 0 && (
+          <p className="deck-focus-note">No cards matched this search. Try another phrase or switch mode.</p>
+        )}
+
+        {searchQueryResult.isSuccess && searchResults.length > 0 && (
+          <div className="dashboard-search-result-list">
+            {searchResults.slice(0, 12).map((result) => (
+              <article key={result.cardId} className="dashboard-search-result-card">
+                <div className="dashboard-search-result-head">
+                  <strong>{result.front}</strong>
+                  <small>Score {result.score.toFixed(3)}</small>
+                </div>
                 <p>{result.back}</p>
-                <small>Score: {result.score.toFixed(3)}</small>
+                <div className="dashboard-search-result-meta">
+                  <span>{deckById.get(result.deckId)?.title ?? "Deck unavailable"}</span>
+                  <span>{normalizeTypeLabel(result.type)}</span>
+                </div>
+                <div className="row">
+                  <button className="button-main" type="button" onClick={() => onOpenSearchCard(result.deckId, result.cardId)}>
+                    Open card
+                  </button>
+                  <button className="button-alt" type="button" onClick={() => onOpenSearchDeck(result.deckId)}>
+                    Open deck
+                  </button>
+                </div>
               </article>
             ))}
           </div>
         )}
       </section>
 
+      <section className="surface dashboard-browse-panel">
+        <h2>Browse Decks</h2>
+        <p>Handle large libraries with title filters, sorting, and quick resume actions.</p>
+        <div className="dashboard-browse-controls">
+          <input
+            value={deckFilterQuery}
+            onChange={(event) => setDeckFilterQuery(event.target.value)}
+            placeholder="Filter by deck title"
+            maxLength={160}
+          />
+          <select value={deckSortMode} onChange={(event) => setDeckSortMode(event.target.value as DeckSortMode)}>
+            <option value="due">Sort: Highest due first</option>
+            <option value="recent">Sort: Recently reviewed</option>
+            <option value="mastery">Sort: Highest mastery</option>
+            <option value="shaky">Sort: Most shaky cards</option>
+            <option value="title">Sort: Title A-Z</option>
+            <option value="created">Sort: Newest created</option>
+          </select>
+        </div>
+        <p className="deck-focus-note">
+          Showing {showingFrom}-{showingTo} of {filteredAndSortedDecks.length} matching decks.
+        </p>
+      </section>
+
       <section className="grid deck-grid dashboard-deck-grid">
-        {decks.map((deck) => (
+        {pagedDecks.map((deck) => (
           <article key={deck.id} className="surface deck-card">
-            <h3>{deck.title}</h3>
+            <div className="deck-card-head">
+              <h3>{deck.title}</h3>
+              <div className="deck-menu">
+                <button
+                  type="button"
+                  className="deck-menu-button"
+                  aria-label={`More options for ${deck.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActiveDeckMenuId((previous) => previous === deck.id ? null : deck.id);
+                  }}
+                >
+                  ...
+                </button>
+                {activeDeckMenuId === deck.id && (
+                  <div className="deck-menu-popover" role="menu">
+                    <button
+                      type="button"
+                      className="deck-menu-delete"
+                      onClick={() => onDeleteDeck(deck)}
+                      disabled={deleteDeckMutation.isPending}
+                    >
+                      Delete deck permanently
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <p className="card-stat">Mastery: {deck.masteryPercent.toFixed(1)}%</p>
             <div className="deck-progress-track" aria-label={`Mastery for ${deck.title}`}>
               <div
@@ -355,6 +593,37 @@ export function DashboardPage() {
           </article>
         ))}
       </section>
+
+      {filteredAndSortedDecks.length === 0 && (
+        <section className="surface">
+          <strong>No decks match your current filters.</strong>
+          <p className="deck-focus-note">Try changing the title filter or sort order.</p>
+        </section>
+      )}
+
+      {filteredAndSortedDecks.length > 0 && (
+        <section className="surface dashboard-pagination">
+          <div className="row">
+            <button
+              className="button-alt"
+              type="button"
+              onClick={() => setDeckPage((previous) => Math.max(previous - 1, 1))}
+              disabled={currentPage <= 1}
+            >
+              Previous
+            </button>
+            <span className="dashboard-page-indicator">Page {currentPage} of {totalPages}</span>
+            <button
+              className="button-alt"
+              type="button"
+              onClick={() => setDeckPage((previous) => Math.min(previous + 1, totalPages))}
+              disabled={currentPage >= totalPages}
+            >
+              Next
+            </button>
+          </div>
+        </section>
+      )}
 
       {uploadMutation.isSuccess && (
         <section className="surface">

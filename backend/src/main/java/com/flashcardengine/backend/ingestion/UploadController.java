@@ -3,6 +3,9 @@ package com.flashcardengine.backend.ingestion;
 import com.flashcardengine.backend.common.SecurityUtils;
 import com.flashcardengine.backend.deck.DeckService;
 import com.flashcardengine.backend.storage.R2StorageService;
+import com.flashcardengine.backend.streak.UserStreakService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
@@ -25,10 +28,13 @@ import static org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE;
 @RequestMapping("/api/ingestion")
 public class UploadController {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(UploadController.class);
+
     private final SecurityUtils securityUtils;
     private final DeckService deckService;
     private final R2StorageService r2StorageService;
     private final ApplicationEventPublisher eventPublisher;
+    private final UserStreakService userStreakService;
 
     @Value("${app.upload.max-size-mb:20}")
     private long maxSizeMb;
@@ -36,11 +42,13 @@ public class UploadController {
     public UploadController(SecurityUtils securityUtils,
                             DeckService deckService,
                             R2StorageService r2StorageService,
-                            ApplicationEventPublisher eventPublisher) {
+                            ApplicationEventPublisher eventPublisher,
+                            UserStreakService userStreakService) {
         this.securityUtils = securityUtils;
         this.deckService = deckService;
         this.r2StorageService = r2StorageService;
         this.eventPublisher = eventPublisher;
+        this.userStreakService = userStreakService;
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -61,6 +69,7 @@ public class UploadController {
             );
 
             eventPublisher.publishEvent(new PdfUploadedEvent(userId, deckId, fileKey));
+            recordActivitySafely(userId);
 
             return Map.of(
                 "file_key", fileKey,
@@ -90,6 +99,14 @@ public class UploadController {
         long maxBytes = maxSizeMb * 1024 * 1024;
         if (file.getSize() > maxBytes) {
             throw new ResponseStatusException(PAYLOAD_TOO_LARGE, "File exceeds max upload size");
+        }
+    }
+
+    private void recordActivitySafely(UUID userId) {
+        try {
+            userStreakService.recordActivity(userId);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Failed to record streak activity for user {}", userId, ex);
         }
     }
 }

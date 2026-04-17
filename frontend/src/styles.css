@@ -182,6 +182,20 @@ body {
   padding: 1.15rem;
 }
 
+.app-footer {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0.35rem 1.15rem 1rem;
+}
+
+.app-footer p {
+  margin: 0;
+  text-align: center;
+  color: rgba(16, 53, 90, 0.8);
+  font-size: 0.83rem;
+  font-weight: 600;
+}
+
 .surface {
   background:
     linear-gradient(150deg, rgba(255, 255, 255, 0.96), rgba(244, 250, 255, 0.88));
@@ -233,8 +247,195 @@ body {
   margin-top: 0;
 }
 
+.dashboard-search-shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 14px;
+  border: 1px solid rgba(18, 47, 72, 0.2);
+  background: linear-gradient(125deg, rgba(255, 255, 255, 0.95), rgba(241, 250, 255, 0.92));
+  padding: 0.4rem 0.45rem;
+}
+
+.dashboard-search-icon {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(16, 53, 90, 0.72);
+  font-weight: 800;
+  padding-left: 0.35rem;
+}
+
+.dashboard-search-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dashboard-search-input:focus {
+  outline: none;
+}
+
+.dashboard-search-clear {
+  border: none;
+  border-radius: 10px;
+  background: rgba(16, 53, 90, 0.1);
+  color: #11385a;
+  font-weight: 700;
+  padding: 0.46rem 0.62rem;
+  cursor: pointer;
+}
+
+.dashboard-search-controls {
+  margin-top: 0.72rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.dashboard-search-controls label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.dashboard-search-controls span {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 800;
+  color: rgba(18, 47, 72, 0.74);
+}
+
+.dashboard-search-result-list {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.dashboard-search-result-card {
+  border-radius: 12px;
+  border: 1px solid rgba(18, 47, 72, 0.15);
+  background: rgba(248, 252, 255, 0.88);
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.dashboard-search-result-card p {
+  margin: 0;
+  color: rgba(17, 37, 48, 0.9);
+  line-height: 1.35;
+}
+
+.dashboard-search-result-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: baseline;
+}
+
+.dashboard-search-result-head strong {
+  color: #12324d;
+}
+
+.dashboard-search-result-head small {
+  color: rgba(16, 53, 90, 0.78);
+  font-weight: 700;
+}
+
+.dashboard-search-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.48rem;
+  font-size: 0.79rem;
+  color: rgba(16, 53, 90, 0.82);
+}
+
+.dashboard-search-result-meta span {
+  border-radius: 999px;
+  border: 1px solid rgba(16, 53, 90, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.2rem 0.48rem;
+}
+
+.dashboard-browse-panel p {
+  margin-top: 0;
+  color: var(--text-muted);
+}
+
+.dashboard-browse-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr);
+  gap: 0.62rem;
+}
+
 .dashboard-deck-grid {
   margin-top: 0.2rem;
+}
+
+.deck-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.52rem;
+}
+
+.deck-card-head h3 {
+  margin: 0;
+}
+
+.deck-menu {
+  position: relative;
+}
+
+.deck-menu-button {
+  border: 1px solid rgba(16, 53, 90, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  color: rgba(17, 47, 75, 0.9);
+  font-weight: 800;
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  min-width: 36px;
+}
+
+.deck-menu-popover {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  min-width: 190px;
+  border-radius: 10px;
+  border: 1px solid rgba(16, 53, 90, 0.2);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 26px rgba(18, 47, 72, 0.15);
+  padding: 0.35rem;
+  z-index: 6;
+}
+
+.deck-menu-delete {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: rgba(225, 29, 72, 0.1);
+  color: #9f1239;
+  text-align: left;
+  padding: 0.48rem 0.56rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dashboard-pagination {
+  display: flex;
+  justify-content: center;
+}
+
+.dashboard-page-indicator {
+  min-width: 132px;
+  text-align: center;
+  font-weight: 700;
+  color: rgba(16, 53, 90, 0.86);
 }
 
 .deck-card {
@@ -1294,6 +1495,10 @@ select:focus {
     padding: 0.9rem;
   }
 
+  .app-footer {
+    padding: 0.15rem 0.9rem 0.85rem;
+  }
+
   .topbar {
     padding: 0.85rem 0.9rem;
     flex-wrap: wrap;
@@ -1337,6 +1542,14 @@ select:focus {
   }
 
   .mastery-example-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-search-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-browse-controls {
     grid-template-columns: 1fr;
   }
 

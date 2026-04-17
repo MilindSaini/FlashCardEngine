@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import { apiClient } from "../api/client";
 import { useAuthStore } from "../store/authStore";
-import { useStreakStore } from "../store/streakStore";
 import { normalizeEmail, validateEmail, validatePassword } from "../types/validation";
 
 export function AuthPage() {
@@ -13,7 +12,6 @@ export function AuthPage() {
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const setAuth = useAuthStore((state) => state.setAuth);
-  const registerLogin = useStreakStore((state) => state.registerLogin);
   const navigate = useNavigate();
 
   const authMutation = useMutation({
@@ -26,7 +24,6 @@ export function AuthPage() {
     onSuccess: (response) => {
       setFormError(null);
       setAuth(response.token, response.userId, response.email);
-      registerLogin(response.userId);
       toast.success(mode === "login" ? "Welcome back. You are logged in." : "Account created successfully.");
       navigate("/");
     },

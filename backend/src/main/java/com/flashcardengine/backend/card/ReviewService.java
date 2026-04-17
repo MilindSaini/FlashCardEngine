@@ -10,6 +10,9 @@ import com.flashcardengine.backend.persistence.repository.CardSm2StateRepository
 import com.flashcardengine.backend.persistence.repository.ReviewHistoryRepository;
 import com.flashcardengine.backend.persistence.repository.UserRepository;
 import com.flashcardengine.backend.session.SessionCardProgressService;
+import com.flashcardengine.backend.streak.UserStreakService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -23,25 +26,30 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @Service
 public class ReviewService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(ReviewService.class);
+
     private final CardRepository cardRepository;
     private final CardSm2StateRepository cardSm2StateRepository;
     private final ReviewHistoryRepository reviewHistoryRepository;
     private final UserRepository userRepository;
     private final Sm2Service sm2Service;
     private final SessionCardProgressService sessionCardProgressService;
+    private final UserStreakService userStreakService;
 
     public ReviewService(CardRepository cardRepository,
                          CardSm2StateRepository cardSm2StateRepository,
                          ReviewHistoryRepository reviewHistoryRepository,
                          UserRepository userRepository,
                          Sm2Service sm2Service,
-                         SessionCardProgressService sessionCardProgressService) {
+                         SessionCardProgressService sessionCardProgressService,
+                         UserStreakService userStreakService) {
         this.cardRepository = cardRepository;
         this.cardSm2StateRepository = cardSm2StateRepository;
         this.reviewHistoryRepository = reviewHistoryRepository;
         this.userRepository = userRepository;
         this.sm2Service = sm2Service;
         this.sessionCardProgressService = sessionCardProgressService;
+        this.userStreakService = userStreakService;
     }
 
     @Transactional
@@ -71,6 +79,7 @@ public class ReviewService {
             sessionCardProgressService.markCardRemaining(userId, card.getDeck().getId(), cardId);
         }
         card.getDeck().setLastReviewedAt(Instant.now());
+        recordActivitySafely(userId);
 
         return new ReviewResponse(
             cardId,
@@ -83,6 +92,14 @@ public class ReviewService {
             sm2Service.isMastered(state),
             sm2Service.isShaky(state)
         );
+    }
+
+    private void recordActivitySafely(UUID userId) {
+        try {
+            userStreakService.recordActivity(userId);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Failed to record streak activity for user {}", userId, ex);
+        }
     }
 
     private CardSm2StateEntity initializeState(CardEntity card) {

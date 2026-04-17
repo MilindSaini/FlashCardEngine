@@ -8,6 +8,9 @@ import com.flashcardengine.backend.persistence.entity.SessionStateId;
 import com.flashcardengine.backend.persistence.repository.SessionStateRepository;
 import com.flashcardengine.backend.session.dto.SessionStateResponse;
 import com.flashcardengine.backend.session.dto.UpdateSessionRequest;
+import com.flashcardengine.backend.streak.UserStreakService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,19 +23,24 @@ import java.util.stream.Collectors;
 @Service
 public class SessionStateService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(SessionStateService.class);
+
     private final SessionStateRepository sessionStateRepository;
     private final DeckService deckService;
     private final CardService cardService;
     private final SessionCardProgressService sessionCardProgressService;
+    private final UserStreakService userStreakService;
 
     public SessionStateService(SessionStateRepository sessionStateRepository,
                                DeckService deckService,
                                CardService cardService,
-                               SessionCardProgressService sessionCardProgressService) {
+                               SessionCardProgressService sessionCardProgressService,
+                               UserStreakService userStreakService) {
         this.sessionStateRepository = sessionStateRepository;
         this.deckService = deckService;
         this.cardService = cardService;
         this.sessionCardProgressService = sessionCardProgressService;
+        this.userStreakService = userStreakService;
     }
 
     @Transactional
@@ -103,6 +111,7 @@ public class SessionStateService {
         state.setLastAccessed(Instant.now());
 
         SessionStateEntity saved = sessionStateRepository.save(state);
+        recordActivitySafely(userId);
         return toResponse(saved, false, List.of());
     }
 
@@ -133,5 +142,13 @@ public class SessionStateService {
             completedCardIds,
             state.getLastAccessed()
         );
+    }
+
+    private void recordActivitySafely(UUID userId) {
+        try {
+            userStreakService.recordActivity(userId);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Failed to record streak activity for user {}", userId, ex);
+        }
     }
 }

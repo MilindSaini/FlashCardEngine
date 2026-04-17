@@ -10,6 +10,9 @@ import com.flashcardengine.backend.persistence.repository.CardRepository;
 import com.flashcardengine.backend.persistence.repository.CardSm2StateRepository;
 import com.flashcardengine.backend.persistence.repository.DeckRepository;
 import com.flashcardengine.backend.persistence.repository.UserRepository;
+import com.flashcardengine.backend.streak.UserStreakService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -24,19 +27,24 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @Service
 public class DeckService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(DeckService.class);
+
     private final DeckRepository deckRepository;
     private final UserRepository userRepository;
     private final CardRepository cardRepository;
     private final CardSm2StateRepository cardSm2StateRepository;
+    private final UserStreakService userStreakService;
 
     public DeckService(DeckRepository deckRepository,
                        UserRepository userRepository,
                        CardRepository cardRepository,
-                       CardSm2StateRepository cardSm2StateRepository) {
+                       CardSm2StateRepository cardSm2StateRepository,
+                       UserStreakService userStreakService) {
         this.deckRepository = deckRepository;
         this.userRepository = userRepository;
         this.cardRepository = cardRepository;
         this.cardSm2StateRepository = cardSm2StateRepository;
+        this.userStreakService = userStreakService;
     }
 
     @Transactional
@@ -49,7 +57,15 @@ public class DeckService {
         deck.setTitle(request.title().trim());
 
         DeckEntity saved = deckRepository.save(deck);
+        recordActivitySafely(userId);
         return toSummary(saved);
+    }
+
+    @Transactional
+    public void deleteDeck(UUID userId, UUID deckId) {
+        DeckEntity deck = getDeckForUser(deckId, userId);
+        deckRepository.delete(deck);
+        recordActivitySafely(userId);
     }
 
     @Transactional(readOnly = true)
@@ -110,5 +126,13 @@ public class DeckService {
             nextReviewDate,
             masteryPercent
         );
+    }
+
+    private void recordActivitySafely(UUID userId) {
+        try {
+            userStreakService.recordActivity(userId);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Failed to record streak activity for user {}", userId, ex);
+        }
     }
 }

@@ -1,10 +1,21 @@
 import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { AuthPage } from "./pages/AuthPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ReviewSessionPage } from "./pages/ReviewSessionPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { apiClient } from "./api/client";
+import { UserStreakStats } from "./api/types";
 import { useAuthStore } from "./store/authStore";
-import { EMPTY_STREAK_STATS, useStreakStore } from "./store/streakStore";
+
+const EMPTY_STREAK_STATS: UserStreakStats = {
+  currentStreakDays: 0,
+  longestStreakDays: 0,
+  totalLogins: 0,
+  totalActions: 0,
+  lastLoginDate: null,
+  lastActivityDate: null,
+};
 
 function Protected({ children }: { children: JSX.Element }) {
   const token = useAuthStore((state) => state.token);
@@ -16,14 +27,15 @@ function Protected({ children }: { children: JSX.Element }) {
 
 export default function App() {
   const token = useAuthStore((state) => state.token);
-  const userId = useAuthStore((state) => state.userId);
   const clearAuth = useAuthStore((state) => state.clear);
-  const streakStats = useStreakStore((state) => {
-    if (!userId) {
-      return EMPTY_STREAK_STATS;
-    }
-    return state.byUser[userId] ?? EMPTY_STREAK_STATS;
+  const streakQuery = useQuery({
+    queryKey: ["my-streak"],
+    queryFn: () => apiClient.getMyStreak(token as string),
+    enabled: Boolean(token),
+    staleTime: 30_000,
   });
+
+  const streakStats = token ? streakQuery.data ?? EMPTY_STREAK_STATS : EMPTY_STREAK_STATS;
 
   return (
     <div className="app-shell">
@@ -94,6 +106,10 @@ export default function App() {
           <Route path="*" element={<Navigate to={token ? "/" : "/auth"} replace />} />
         </Routes>
       </main>
+
+      <footer className="app-footer">
+        <p>Made in love with Milind Saini</p>
+      </footer>
     </div>
   );
 }

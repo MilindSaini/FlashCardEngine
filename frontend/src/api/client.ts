@@ -1,11 +1,13 @@
 import {
   AuthResponse,
+  DeckDeleteResponse,
   DeckAnalytics,
   DeckSummary,
   DueCard,
   ReviewResponse,
   SearchResponse,
   SessionState,
+  UserStreakStats,
 } from "./types";
 import {
   isValidUuid,
@@ -118,6 +120,17 @@ export const apiClient = {
   },
 
   listDecks: (token: string) => request<DeckSummary[]>("/api/decks", {}, assertToken(token)),
+
+  deleteDeck: (deckId: string, token: string) => {
+    const normalizedDeckId = assertUuid(deckId, "deck id");
+    return request<DeckDeleteResponse>(
+      `/api/decks/${encodeURIComponent(normalizedDeckId)}`,
+      {
+        method: "DELETE",
+      },
+      assertToken(token)
+    );
+  },
 
   createDeck: (title: string, token: string) => {
     const titleError = validateDeckTitle(title);
@@ -239,6 +252,8 @@ export const apiClient = {
     const normalizedDeckId = assertUuid(deckId, "deck id");
     return request<DeckAnalytics>(`/api/analytics/decks/${encodeURIComponent(normalizedDeckId)}`, {}, assertToken(token));
   },
+
+  getMyStreak: (token: string) => request<UserStreakStats>("/api/users/me/streak", {}, assertToken(token)),
 
   search: (query: string, mode: "fulltext" | "semantic", token: string, deckId?: string) => {
     const normalizedQuery = normalizeSearchQuery(query).trim();

@@ -6,6 +6,9 @@ import com.flashcardengine.backend.auth.dto.SignupRequest;
 import com.flashcardengine.backend.config.JwtService;
 import com.flashcardengine.backend.persistence.entity.UserEntity;
 import com.flashcardengine.backend.persistence.repository.UserRepository;
+import com.flashcardengine.backend.streak.UserStreakService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,16 +22,21 @@ import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 @Service
 public class AuthService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final UserStreakService userStreakService;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
-                       JwtService jwtService) {
+                       JwtService jwtService,
+                       UserStreakService userStreakService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.userStreakService = userStreakService;
     }
 
     @Transactional
@@ -44,11 +52,12 @@ public class AuthService {
         user.setRole(UserEntity.DEFAULT_ROLE);
 
         UserEntity saved = userRepository.save(user);
+        recordLoginSafely(saved.getId());
         String token = jwtService.generateToken(saved.getId(), saved.getEmail());
         return new AuthResponse(token, saved.getId(), saved.getEmail());
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AuthResponse login(LoginRequest request) {
         String email = normalizeEmail(request.email());
 
@@ -59,11 +68,20 @@ public class AuthService {
             throw new ResponseStatusException(UNAUTHORIZED, "Invalid credentials");
         }
 
+        recordLoginSafely(user.getId());
         String token = jwtService.generateToken(user.getId(), user.getEmail());
         return new AuthResponse(token, user.getId(), user.getEmail());
     }
 
     private String normalizeEmail(String email) {
         return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void recordLoginSafely(java.util.UUID userId) {
+        try {
+            userStreakService.recordLogin(userId);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Failed to record streak login for user {}", userId, ex);
+        }
     }
 }

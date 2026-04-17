@@ -77,9 +77,7 @@ export function ConceptGraph({ graph }: ConceptGraphProps) {
   } | null>(null);
   const hasAutoFitRef = useRef(false);
   const [width, setWidth] = useState(680);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [hoveredLinkLabel, setHoveredLinkLabel] = useState<string | null>(null);
   const [showStrongOnly, setShowStrongOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFeedback, setSearchFeedback] = useState<string | null>(null);
@@ -343,7 +341,6 @@ export function ConceptGraph({ graph }: ConceptGraphProps) {
     }
 
     setSelectedNodeId(normalizedNodeId);
-    setHoveredNodeId(normalizedNodeId);
     setDrawerOpen(true);
     setSearchFeedback(null);
 
@@ -367,10 +364,7 @@ export function ConceptGraph({ graph }: ConceptGraphProps) {
     if (selectedNodeId && !graphData.nodeMap.has(selectedNodeId)) {
       setSelectedNodeId(null);
     }
-    if (hoveredNodeId && !graphData.nodeMap.has(hoveredNodeId)) {
-      setHoveredNodeId(null);
-    }
-  }, [graphData.nodeMap, hoveredNodeId, selectedNodeId]);
+  }, [graphData.nodeMap, selectedNodeId]);
 
   useEffect(() => {
     if (!selectedNodeId) {
@@ -389,7 +383,7 @@ export function ConceptGraph({ graph }: ConceptGraphProps) {
     }
   }, [graphData.nodeMap, selectedNodeId]);
 
-  const activeNodeId = hoveredNodeId ?? selectedNodeId;
+  const activeNodeId = selectedNodeId;
   const activeNode = activeNodeId ? graphData.nodeMap.get(activeNodeId) ?? null : null;
 
   const activeNeighborhood = useMemo(() => {
@@ -431,13 +425,11 @@ export function ConceptGraph({ graph }: ConceptGraphProps) {
   }, [activeNode, detailRelations, visibleGraph.links]);
 
   const helperText =
-    hoveredLinkLabel
-      ? `Relation: ${hoveredLinkLabel}`
-      : activeNode
-        ? `${activeNode.id} has ${activeNode.degree} direct connection${activeNode.degree === 1 ? "" : "s"}.`
-        : showStrongOnly
-          ? "Strongest relationship mode is active. Switch it off to view all links."
-          : "Click any node to focus it and inspect related concepts.";
+    activeNode
+      ? `${activeNode.id} has ${activeNode.degree} direct connection${activeNode.degree === 1 ? "" : "s"}.`
+      : showStrongOnly
+        ? "Strongest relationship mode is active. Switch it off to view all links."
+        : "Click any node to focus it and inspect related concepts.";
 
   return (
     <div className="surface concept-graph-surface">
@@ -584,19 +576,9 @@ export function ConceptGraph({ graph }: ConceptGraphProps) {
               return active ? 5.5 : 3.5;
             }}
             linkDirectionalArrowRelPos={1}
-            onNodeHover={(node) => {
-              setHoveredNodeId(node ? (node as VisualNode).id : null);
-            }}
             onNodeClick={(node) => {
               const visualNode = node as VisualNode;
               focusNodeById(visualNode.id);
-            }}
-            onLinkHover={(link) => {
-              if (!link) {
-                setHoveredLinkLabel(null);
-                return;
-              }
-              setHoveredLinkLabel((link as VisualLink).relation || null);
             }}
             onEngineStop={() => {
               if (!hasAutoFitRef.current && graphRef.current) {

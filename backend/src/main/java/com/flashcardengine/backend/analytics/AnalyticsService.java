@@ -3,8 +3,10 @@ package com.flashcardengine.backend.analytics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flashcardengine.backend.analytics.dto.DeckAnalyticsResponse;
+import com.flashcardengine.backend.card.Sm2Thresholds;
 import com.flashcardengine.backend.common.SqlSchema;
 import com.flashcardengine.backend.deck.DeckService;
+import com.flashcardengine.backend.persistence.entity.CardType;
 import com.flashcardengine.backend.persistence.repository.CardSm2StateRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -49,9 +51,18 @@ public class AnalyticsService {
     public DeckAnalyticsResponse deckAnalytics(UUID userId, UUID deckId) {
         deckService.getDeckForUser(deckId, userId);
 
-        long mastered = cardSm2StateRepository.countMasteredByDeckId(deckId);
-        long shaky = cardSm2StateRepository.countShakyByDeckId(deckId);
-        long due = cardSm2StateRepository.countUpcomingByDeckId(deckId, LocalDate.now());
+        long mastered = cardSm2StateRepository.countMasteredByDeckId(
+            deckId,
+            CardType.RELATION,
+            Sm2Thresholds.MASTERED_MIN_REPETITIONS,
+            Sm2Thresholds.MASTERED_MIN_AVERAGE_GRADE
+        );
+        long shaky = cardSm2StateRepository.countShakyByDeckId(
+            deckId,
+            CardType.RELATION,
+            Sm2Thresholds.SHAKY_MAX_AVERAGE_GRADE
+        );
+        long due = cardSm2StateRepository.countUpcomingByDeckId(deckId, LocalDate.now(), CardType.RELATION);
 
         return new DeckAnalyticsResponse(
             deckId,

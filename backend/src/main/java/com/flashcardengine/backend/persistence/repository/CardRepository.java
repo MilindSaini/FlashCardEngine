@@ -33,6 +33,9 @@ public interface CardRepository extends JpaRepository<CardEntity, UUID> {
     @Query("select count(c) from CardEntity c where c.deck.id = :deckId")
     long countByDeckId(@Param("deckId") UUID deckId);
 
+    @Query("select count(c) from CardEntity c where c.deck.id = :deckId and c.type <> :excludedType")
+    long countByDeckIdExcludingType(@Param("deckId") UUID deckId, @Param("excludedType") CardType excludedType);
+
     @Query("""
         select c from CardEntity c
         join c.deck d

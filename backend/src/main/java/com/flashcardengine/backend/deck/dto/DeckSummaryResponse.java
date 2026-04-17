@@ -1,6 +1,7 @@
 package com.flashcardengine.backend.deck.dto;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 public record DeckSummaryResponse(
@@ -12,6 +13,7 @@ public record DeckSummaryResponse(
     long masteredCards,
     long shakyCards,
     long dueToday,
+    LocalDate nextReviewDate,
     double masteryPercent
 ) {
 }

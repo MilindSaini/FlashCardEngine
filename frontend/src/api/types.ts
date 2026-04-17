@@ -13,6 +13,7 @@ export type DeckSummary = {
   masteredCards: number;
   shakyCards: number;
   dueToday: number;
+  nextReviewDate: string | null;
   masteryPercent: number;
 };
 

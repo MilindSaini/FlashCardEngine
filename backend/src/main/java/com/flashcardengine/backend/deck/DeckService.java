@@ -1,8 +1,10 @@
 package com.flashcardengine.backend.deck;
 
+import com.flashcardengine.backend.card.Sm2Thresholds;
 import com.flashcardengine.backend.deck.dto.CreateDeckRequest;
 import com.flashcardengine.backend.deck.dto.DeckSummaryResponse;
 import com.flashcardengine.backend.persistence.entity.DeckEntity;
+import com.flashcardengine.backend.persistence.entity.CardType;
 import com.flashcardengine.backend.persistence.entity.UserEntity;
 import com.flashcardengine.backend.persistence.repository.CardRepository;
 import com.flashcardengine.backend.persistence.repository.CardSm2StateRepository;
@@ -71,10 +73,28 @@ public class DeckService {
     }
 
     private DeckSummaryResponse toSummary(DeckEntity deck) {
-        long totalCards = cardRepository.countByDeckId(deck.getId());
-        long masteredCards = cardSm2StateRepository.countMasteredByDeckId(deck.getId());
-        long shakyCards = cardSm2StateRepository.countShakyByDeckId(deck.getId());
-        long dueToday = cardSm2StateRepository.countUpcomingByDeckId(deck.getId(), LocalDate.now());
+        LocalDate today = LocalDate.now();
+        long totalCards = cardRepository.countByDeckIdExcludingType(deck.getId(), CardType.RELATION);
+        long masteredCards = cardSm2StateRepository.countMasteredByDeckId(
+            deck.getId(),
+            CardType.RELATION,
+            Sm2Thresholds.MASTERED_MIN_REPETITIONS,
+            Sm2Thresholds.MASTERED_MIN_AVERAGE_GRADE
+        );
+        long shakyCards = cardSm2StateRepository.countShakyByDeckId(
+            deck.getId(),
+            CardType.RELATION,
+            Sm2Thresholds.SHAKY_MAX_AVERAGE_GRADE
+        );
+        long dueToday = cardSm2StateRepository.countUpcomingByDeckId(deck.getId(), today, CardType.RELATION);
+        LocalDate nextReviewDate = cardSm2StateRepository.findNextReviewDateByDeckId(
+            deck.getId(),
+            today,
+            CardType.RELATION
+        );
+        if (nextReviewDate != null && nextReviewDate.isBefore(today)) {
+            nextReviewDate = today;
+        }
 
         double masteryPercent = totalCards == 0 ? 0.0 : (masteredCards * 100.0) / totalCards;
 
@@ -87,6 +107,7 @@ public class DeckService {
             masteredCards,
             shakyCards,
             dueToday,
+            nextReviewDate,
             masteryPercent
         );
     }

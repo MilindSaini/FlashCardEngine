@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { toast } from "react-hot-toast";
 import { apiClient } from "../api/client";
 import { DueCard, ReviewResponse } from "../api/types";
 import { CardFlip } from "../components/CardFlip";
 import { useAuthStore } from "../store/authStore";
+import { useStreakStore } from "../store/streakStore";
+import { isValidUuid, validateReviewGrade } from "../types/validation";
 
 type SessionMode = "due" | "all";
 type GradeEffectClass = "" | "grade-hit-1" | "grade-hit-2" | "grade-hit-3" | "grade-hit-4" | "grade-hit-5";
@@ -13,6 +16,7 @@ type LeitnerBox = 1 | 2 | 3 | 4 | 5;
 
 const FIRST_ARRIVAL_REFRESH_KEY_PREFIX = "review-first-arrival-refreshed:";
 const CARD_FADE_MS = 240;
+const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
 
 function difficultyBadge(review: ReviewResponse | null) {
   if (!review) {
@@ -66,9 +70,35 @@ function computeLeitnerReinsertIndex(box: LeitnerBox, currentIndex: number, rema
   return Math.min(currentIndex + 6, remainingLength);
 }
 
+function sessionFocusMessage(mastered: number, shaky: number, upcoming: number) {
+  if (mastered > 0 && shaky === 0 && upcoming === 0) {
+    return "Excellent run. You are in a strong retention zone today.";
+  }
+
+  if (shaky > 0) {
+    return `You have ${shaky} shaky cards. Small, focused passes will stabilize memory quickly.`;
+  }
+
+  if (upcoming > 0) {
+    return `${upcoming} cards are coming up for review. Keep a steady pace and finish the queue.`;
+  }
+
+  return "Steady progress. Keep the rhythm with short, consistent review sessions.";
+}
+
+function milestoneMessage(milestone: number) {
+  if (milestone >= 100) {
+    return "100% reached. Full cycle complete.";
+  }
+  return `${milestone}% milestone reached. Keep going.`;
+}
+
 export function ReviewSessionPage() {
   const token = useAuthStore((state) => state.token);
+  const userId = useAuthStore((state) => state.userId);
+  const registerActivity = useStreakStore((state) => state.registerActivity);
   const { deckId, cardId } = useParams<{ deckId: string; cardId?: string }>();
+  const hasValidDeckId = isValidUuid(deckId);
   const navigate = useNavigate();
   const [cards, setCards] = useState<DueCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -80,6 +110,7 @@ export function ReviewSessionPage() {
   const [lastReview, setLastReview] = useState<ReviewResponse | null>(null);
   const [gradeEffectClass, setGradeEffectClass] = useState<GradeEffectClass>("");
   const [gradeReaction, setGradeReaction] = useState("");
+  const [milestoneNotice, setMilestoneNotice] = useState<{ percent: number; message: string } | null>(null);
   const [fadingCardId, setFadingCardId] = useState<string | null>(null);
   const reviewedCardIdsRef = useRef<Set<string>>(new Set());
   const sawInitialDuePayloadRef = useRef(false);
@@ -92,7 +123,36 @@ export function ReviewSessionPage() {
   const totalCountRef = useRef(0);
   const lastPersistedSessionKeyRef = useRef<string>("");
   const gradeEffectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const milestoneTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const achievedMilestonesRef = useRef<Set<number>>(new Set());
+  const milestoneBaselineInitializedRef = useRef(false);
   const queryClient = useQueryClient();
+
+  const triggerMilestoneCelebration = (milestone: number) => {
+    if (milestoneTimeoutRef.current) {
+      clearTimeout(milestoneTimeoutRef.current);
+      milestoneTimeoutRef.current = null;
+    }
+
+    setMilestoneNotice({ percent: milestone, message: milestoneMessage(milestone) });
+
+    const particles = milestone >= 100 ? 60 : 36;
+    const velocity = milestone >= 100 ? 38 : 24;
+    confetti({
+      particleCount: particles,
+      spread: 44,
+      startVelocity: velocity,
+      gravity: 1.1,
+      scalar: 0.8,
+      ticks: 140,
+      origin: { x: 0.5, y: 0.74 },
+      colors: ["#14b8a6", "#2dd4bf", "#f59e0b", "#ff5e2c"],
+    });
+
+    milestoneTimeoutRef.current = setTimeout(() => {
+      setMilestoneNotice(null);
+    }, 2400);
+  };
 
   const triggerGradeAnimation = (grade: number, mastered: boolean) => {
     if (gradeEffectTimeoutRef.current) {
@@ -219,15 +279,23 @@ export function ReviewSessionPage() {
 
   const syncReviewRoute = useMemo(
     () => (nextCardId: string | null, replace = true) => {
-      if (!deckId) {
+      if (!deckId || !hasValidDeckId) {
         return;
       }
 
       const nextPath = nextCardId ? `/review/${deckId}/${nextCardId}` : `/review/${deckId}`;
       navigate(nextPath, { replace });
     },
-    [deckId, navigate]
+    [deckId, hasValidDeckId, navigate]
   );
+
+  useEffect(() => {
+    if (!deckId || hasValidDeckId) {
+      return;
+    }
+
+    toast.error("Invalid deck link. Please open the deck again from dashboard.", { id: "invalid-review-deck" });
+  }, [deckId, hasValidDeckId]);
 
   useEffect(() => {
     cardsRef.current = cards;
@@ -250,21 +318,24 @@ export function ReviewSessionPage() {
       if (gradeEffectTimeoutRef.current) {
         clearTimeout(gradeEffectTimeoutRef.current);
       }
+      if (milestoneTimeoutRef.current) {
+        clearTimeout(milestoneTimeoutRef.current);
+      }
     };
   }, []);
 
   const sessionQuery = useQuery({
     queryKey: ["deck-session", deckId],
     queryFn: () => apiClient.getSession(deckId as string, token as string),
-    enabled: Boolean(deckId && token),
+    enabled: Boolean(deckId && token && hasValidDeckId),
     refetchOnMount: "always",
   });
 
   const dueCardsQuery = useQuery({
     queryKey: ["due-cards", deckId],
     queryFn: () => apiClient.dueCards(deckId as string, token as string),
-    enabled: Boolean(deckId && token),
-    refetchInterval: sessionMode === "due" ? 4000 : 10000,
+    enabled: Boolean(deckId && token && hasValidDeckId),
+    refetchInterval: sessionMode === "due" ? 5000 : 15000,
     refetchIntervalInBackground: false,
     retry: 1,
     refetchOnMount: "always",
@@ -273,11 +344,19 @@ export function ReviewSessionPage() {
   const deckCardsQuery = useQuery({
     queryKey: ["deck-cards", deckId],
     queryFn: () => apiClient.deckCards(deckId as string, token as string),
-    enabled: Boolean(deckId && token),
-    refetchInterval: 8000,
+    enabled: Boolean(deckId && token && hasValidDeckId),
+    refetchInterval: 15000,
     refetchIntervalInBackground: false,
     retry: 1,
     refetchOnMount: "always",
+  });
+
+  const deckSummaryQuery = useQuery({
+    queryKey: ["decks"],
+    queryFn: () => apiClient.listDecks(token as string),
+    enabled: Boolean(token),
+    refetchOnMount: "always",
+    refetchIntervalInBackground: false,
   });
 
   const sessionMutation = useMutation({
@@ -286,12 +365,26 @@ export function ReviewSessionPage() {
       completedCards: number;
       totalCards: number;
       allCardsMode: boolean;
-    }) => apiClient.updateSession(deckId as string, payload, token as string),
+    }) => {
+      if (!deckId || !hasValidDeckId) {
+        throw new Error("Invalid deck reference.");
+      }
+      return apiClient.updateSession(deckId, payload, token as string);
+    },
   });
 
   const resetProgressMutation = useMutation({
-    mutationFn: () => apiClient.resetSessionProgress(deckId as string, token as string),
+    mutationFn: () => {
+      if (!deckId || !hasValidDeckId) {
+        throw new Error("Invalid deck reference.");
+      }
+      return apiClient.resetSessionProgress(deckId, token as string);
+    },
     onSuccess: () => {
+      if (userId) {
+        registerActivity(userId);
+      }
+      toast.success("Deck progress restarted.");
       reviewedCardIdsRef.current = new Set();
       leitnerBoxesRef.current = {};
       setCompletedCount(0);
@@ -315,6 +408,9 @@ export function ReviewSessionPage() {
       void dueCardsQuery.refetch();
       void deckCardsQuery.refetch();
     },
+    onError: () => {
+      toast.error("Could not restart deck progress right now.", { id: "review-reset-error" });
+    },
   });
 
   useEffect(() => {
@@ -333,6 +429,13 @@ export function ReviewSessionPage() {
     startedWithoutCardsRef.current = false;
     skipNextSessionPersistRef.current = true;
     lastPersistedSessionKeyRef.current = "";
+    achievedMilestonesRef.current = new Set();
+    milestoneBaselineInitializedRef.current = false;
+    setMilestoneNotice(null);
+    if (milestoneTimeoutRef.current) {
+      clearTimeout(milestoneTimeoutRef.current);
+      milestoneTimeoutRef.current = null;
+    }
   }, [deckId]);
 
   useEffect(() => {
@@ -559,9 +662,17 @@ export function ReviewSessionPage() {
   }, [cards, currentIndex, goPrevious, goNext]);
 
   const reviewMutation = useMutation({
-    mutationFn: ({ cardId, grade }: { cardId: string; grade: number }) =>
-      apiClient.submitReview(cardId, grade, token as string),
+    mutationFn: ({ cardId, grade }: { cardId: string; grade: number }) => {
+      const gradeError = validateReviewGrade(grade);
+      if (gradeError) {
+        throw new Error(gradeError);
+      }
+      return apiClient.submitReview(cardId, grade, token as string);
+    },
     onSuccess: async (response, variables) => {
+      if (userId) {
+        registerActivity(userId);
+      }
       triggerGradeAnimation(variables.grade, response.mastered);
       setLastReview(response);
       setFlipped(false);
@@ -571,8 +682,7 @@ export function ReviewSessionPage() {
 
       if (!currentCard) {
         queryClient.invalidateQueries({ queryKey: ["decks"] });
-        queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
-        queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
+        void queryClient.refetchQueries({ queryKey: ["decks"], type: "active" });
         return;
       }
 
@@ -608,9 +718,7 @@ export function ReviewSessionPage() {
           setCompletedCount(nextTotal);
           setTotalCount(nextTotal);
           queryClient.invalidateQueries({ queryKey: ["decks"] });
-          queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
-          queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
-          resetProgressMutation.mutate();
+          void queryClient.refetchQueries({ queryKey: ["decks"], type: "active" });
           return;
         }
 
@@ -636,8 +744,10 @@ export function ReviewSessionPage() {
       setCompletedCount(nextCompleted);
       setTotalCount(nextTotal);
       queryClient.invalidateQueries({ queryKey: ["decks"] });
-      queryClient.invalidateQueries({ queryKey: ["due-cards", deckId] });
-      queryClient.invalidateQueries({ queryKey: ["deck-cards", deckId] });
+      void queryClient.refetchQueries({ queryKey: ["decks"], type: "active" });
+    },
+    onError: () => {
+      toast.error("Review could not be submitted. Please try again.", { id: "review-submit-error" });
     },
   });
 
@@ -646,13 +756,88 @@ export function ReviewSessionPage() {
   const remainingCount = Math.max(effectiveTotalCount - completedCount, 0);
   const progressPercent = effectiveTotalCount === 0 ? 0 : Math.min(100, (completedCount / effectiveTotalCount) * 100);
   const badge = difficultyBadge(lastReview);
+  const currentDeckSummary = deckSummaryQuery.data?.find((deck) => deck.id === deckId);
+  const masteredSnapshot = currentDeckSummary?.masteredCards ?? completedCount;
+  const shakySnapshot = currentDeckSummary?.shakyCards ?? 0;
+  const upcomingSnapshot = currentDeckSummary?.dueToday ?? remainingCount;
+  const focusMessage = sessionFocusMessage(masteredSnapshot, shakySnapshot, upcomingSnapshot);
+
+  const reviewErrorText = reviewMutation.isError
+    ? "Review submission failed. Please try again."
+    : resetProgressMutation.isError
+      ? "Could not restart this deck right now."
+      : sessionQuery.isError
+        ? "Session data could not be loaded. Please refresh."
+        : dueCardsQuery.isError
+          ? "Due-card updates are temporarily unavailable."
+          : deckCardsQuery.isError
+            ? "Deck cards are not available right now."
+            : deckSummaryQuery.isError
+              ? "Progress snapshot is temporarily unavailable."
+              : sessionMutation.isError
+                ? "Session state could not be saved."
+                : null;
+
+  useEffect(() => {
+    if (!reviewErrorText) {
+      return;
+    }
+    toast.error(reviewErrorText, { id: "review-page-error" });
+  }, [reviewErrorText]);
+
+  useEffect(() => {
+    if (!sessionHydrated || effectiveTotalCount <= 0 || milestoneBaselineInitializedRef.current) {
+      return;
+    }
+
+    const baselineMilestones = new Set<number>();
+    for (const threshold of PROGRESS_MILESTONES) {
+      if (progressPercent >= threshold) {
+        baselineMilestones.add(threshold);
+      }
+    }
+    achievedMilestonesRef.current = baselineMilestones;
+    milestoneBaselineInitializedRef.current = true;
+  }, [sessionHydrated, effectiveTotalCount, progressPercent]);
+
+  useEffect(() => {
+    if (!sessionHydrated || effectiveTotalCount <= 0 || !milestoneBaselineInitializedRef.current) {
+      return;
+    }
+
+    for (const threshold of PROGRESS_MILESTONES) {
+      if (progressPercent >= threshold && !achievedMilestonesRef.current.has(threshold)) {
+        achievedMilestonesRef.current.add(threshold);
+        triggerMilestoneCelebration(threshold);
+      }
+    }
+  }, [effectiveTotalCount, progressPercent, sessionHydrated]);
 
   const gradeButtons = useMemo(() => [1, 2, 3, 4, 5], []);
   const canMoveBack = currentIndex > 0;
   const canMoveForward = currentIndex < cards.length - 1;
 
+  const submitGrade = (grade: number) => {
+    const gradeError = validateReviewGrade(grade);
+    if (gradeError) {
+      toast.error(gradeError, { id: "review-grade-validation" });
+      return;
+    }
+
+    if (!currentCard || !isValidUuid(currentCard.id)) {
+      toast.error("Current card is invalid. Please refresh the session.", { id: "review-card-validation" });
+      return;
+    }
+
+    reviewMutation.mutate({ cardId: currentCard.id, grade });
+  };
+
+  if (deckId && cardId && !isValidUuid(cardId)) {
+    return <section className="surface review-state">Invalid card link. Open the deck again from dashboard.</section>;
+  }
+
   if (sessionQuery.isLoading || !sessionHydrated) {
-    return <section className="surface">Loading review session...</section>;
+    return <section className="surface review-state">Loading review session...</section>;
   }
 
   if (!currentCard) {
@@ -660,18 +845,39 @@ export function ReviewSessionPage() {
     const waitingOnDueCards = sessionMode === "due" && dueCardsQuery.isFetching;
     const waitingOnDeckCards = deckCardsQuery.isFetching;
 
-    const title = hasReachedHundred ? "Refreshing Deck" : "Waiting For Cards";
+    const title = hasReachedHundred ? "Deck Completed" : "Waiting For Cards";
     const message = hasReachedHundred
-      ? "Progress hit 100%. Reloading your full deck cards for a fresh pass."
+      ? "Progress hit 100%. Your cycle is saved. Click Restart Deck when you want a fresh pass."
       : "No cards are visible right now. If PDF ingestion is running, cards will appear automatically.";
 
     return (
-      <section className="surface">
+      <section className="surface review-empty-state">
         <h2>{title}</h2>
         <p>{message}</p>
+        {milestoneNotice && (
+          <div className="milestone-banner" role="status" aria-live="polite">
+            <span className="milestone-badge">{milestoneNotice.percent}%</span>
+            <span>{milestoneNotice.message}</span>
+          </div>
+        )}
+        <div className="session-snapshot-grid" role="list" aria-label="Review readiness snapshot">
+          <article className="session-snapshot-card mastered" role="listitem">
+            <span className="session-snapshot-label">Mastered</span>
+            <strong className="session-snapshot-value">{masteredSnapshot}</strong>
+          </article>
+          <article className="session-snapshot-card shaky" role="listitem">
+            <span className="session-snapshot-label">Shaky</span>
+            <strong className="session-snapshot-value">{shakySnapshot}</strong>
+          </article>
+          <article className="session-snapshot-card upcoming" role="listitem">
+            <span className="session-snapshot-label">Coming Up</span>
+            <strong className="session-snapshot-value">{upcomingSnapshot}</strong>
+          </article>
+        </div>
+        <p className="session-motivation">{focusMessage}</p>
         <p>Completed: {completedCount} | Remaining: {remainingCount}</p>
         <p>{waitingOnDueCards || waitingOnDeckCards ? "Syncing latest cards..." : "Use Refresh if you want to force-check now."}</p>
-        <div className="row">
+        <div className="row review-empty-actions">
           <button
             className="button-alt"
             onClick={() => {
@@ -705,35 +911,48 @@ export function ReviewSessionPage() {
   }
 
   return (
-    <div className="grid">
-      <section className="surface">
+    <div className="grid review-page">
+      <section className="surface review-overview">
+        <p className="review-kicker">Adaptive Practice Loop</p>
         <h1>Review Session</h1>
+        {milestoneNotice && (
+          <div className="milestone-banner" role="status" aria-live="polite">
+            <span className="milestone-badge">{milestoneNotice.percent}%</span>
+            <span>{milestoneNotice.message}</span>
+          </div>
+        )}
+        <div className="session-snapshot-grid" role="list" aria-label="Review progress snapshot">
+          <article className="session-snapshot-card mastered" role="listitem">
+            <span className="session-snapshot-label">Mastered</span>
+            <strong className="session-snapshot-value">{masteredSnapshot}</strong>
+          </article>
+          <article className="session-snapshot-card shaky" role="listitem">
+            <span className="session-snapshot-label">Shaky</span>
+            <strong className="session-snapshot-value">{shakySnapshot}</strong>
+          </article>
+          <article className="session-snapshot-card upcoming" role="listitem">
+            <span className="session-snapshot-label">Coming Up</span>
+            <strong className="session-snapshot-value">{upcomingSnapshot}</strong>
+          </article>
+        </div>
+        <p className="session-motivation">{focusMessage}</p>
         <p>Progress: {progressPercent.toFixed(1)}% ({completedCount}/{effectiveTotalCount || 0})</p>
         <p>Completed: {completedCount} | Remaining: {remainingCount}</p>
         <p>Mode: {sessionMode === "all" ? "All cards" : "Due cards"}</p>
         <p>Scheduling: SM-2 grading + Leitner review queue</p>
         <p>{dueCardsQuery.isFetching ? "Checking for new generated cards..." : "Live queue updates are active."}</p>
-        <div
-          style={{
-            width: "100%",
-            height: 12,
-            borderRadius: 999,
-            background: "#dde8ef",
-            overflow: "hidden",
-          }}
-        >
+        <div className="review-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPercent)}>
           <div
+            className="review-progress-fill"
             style={{
               width: `${progressPercent}%`,
-              height: "100%",
-              background: "linear-gradient(90deg, #14b8a6, #ff5e2c)",
             }}
           />
         </div>
       </section>
 
-      <section className={`surface review-card-surface ${gradeEffectClass}`}>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: "0.8rem" }}>
+      <section className={`surface review-card-surface review-card-panel ${gradeEffectClass}`}>
+        <div className="row review-nav-row">
           <button className="button-alt" onClick={goPrevious} disabled={!canMoveBack || reviewMutation.isPending}>
             ← Previous
           </button>
@@ -752,8 +971,8 @@ export function ReviewSessionPage() {
         </div>
       </section>
 
-      <section className="surface grid">
-        <div className="row" style={{ justifyContent: "space-between" }}>
+      <section className="surface grid review-grading-panel">
+        <div className="row review-grade-head">
           <strong>Grade Recall (0-5)</strong>
           <span className={badge.className}>
             {badge.icon} {badge.label}
@@ -764,7 +983,7 @@ export function ReviewSessionPage() {
           {gradeButtons.map((grade) => (
             <button
               key={grade}
-              onClick={() => reviewMutation.mutate({ cardId: currentCard.id, grade })}
+              onClick={() => submitGrade(grade)}
               disabled={reviewMutation.isPending}
             >
               {grade}
@@ -775,20 +994,15 @@ export function ReviewSessionPage() {
         {gradeReaction && <p className={`grade-reaction ${gradeEffectClass}`}>{gradeReaction}</p>}
 
         {lastReview && (
-          <p>
+          <p className="review-last-result">
             Next review: {lastReview.nextReviewDate} | Interval: {lastReview.intervalDays} day(s) | EF: {lastReview.easinessFactor.toFixed(2)}
           </p>
         )}
       </section>
 
-      {(dueCardsQuery.isError || deckCardsQuery.isError || sessionQuery.isError || reviewMutation.isError || sessionMutation.isError || resetProgressMutation.isError) && (
-        <section className="surface" style={{ color: "#b91c1c" }}>
-          {(dueCardsQuery.error as Error)?.message ||
-            (deckCardsQuery.error as Error)?.message ||
-            (sessionQuery.error as Error)?.message ||
-            (sessionMutation.error as Error)?.message ||
-            (resetProgressMutation.error as Error)?.message ||
-            (reviewMutation.error as Error)?.message}
+      {reviewErrorText && (
+        <section className="surface review-error-panel">
+          {reviewErrorText}
         </section>
       )}
     </div>

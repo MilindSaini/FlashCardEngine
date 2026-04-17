@@ -50,11 +50,12 @@ public class Sm2Service {
     }
 
     public boolean isMastered(CardSm2StateEntity state) {
-        return state.getRepetitionCount() >= 3 && state.getAverageGrade() >= 4.0;
+        return state.getRepetitionCount() >= Sm2Thresholds.MASTERED_MIN_REPETITIONS
+            && state.getAverageGrade() >= Sm2Thresholds.MASTERED_MIN_AVERAGE_GRADE;
     }
 
     public boolean isShaky(CardSm2StateEntity state) {
-        return state.getAverageGrade() < 2.5;
+        return state.getAverageGrade() < Sm2Thresholds.SHAKY_MAX_AVERAGE_GRADE;
     }
 
     public boolean isUpcoming(CardSm2StateEntity state, LocalDate today) {

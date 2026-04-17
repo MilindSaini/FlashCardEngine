@@ -50,19 +50,13 @@ public class SessionStateService {
         completedCardIds.retainAll(reviewableCardIds);
 
         boolean deckCycleCompleted = reviewableTotalCards > 0 && completedCardIds.size() >= reviewableTotalCards;
-        if (deckCycleCompleted) {
-            // A fully completed cycle flips back to a fresh pass (all cards remaining=true).
-            sessionCardProgressService.clearDeckProgress(userId, deckId);
-            completedCardIds.clear();
-            state.setCurrentCardIndex(0);
-            state.setCompletedCards(0);
-        } else {
-            state.setCompletedCards(Math.min(completedCardIds.size(), reviewableTotalCards));
-        }
+        state.setCompletedCards(Math.min(completedCardIds.size(), reviewableTotalCards));
 
         state.setTotalCards(reviewableTotalCards);
         state.setAllCardsMode(true);
-        state.setCurrentCardIndex(Math.min(Math.max(state.getCurrentCardIndex(), 0), Math.max(reviewableTotalCards - 1, 0)));
+        state.setCurrentCardIndex(deckCycleCompleted
+            ? 0
+            : Math.min(Math.max(state.getCurrentCardIndex(), 0), Math.max(reviewableTotalCards - 1, 0)));
         state.setLastAccessed(Instant.now());
         SessionStateEntity saved = sessionStateRepository.save(state);
         return toResponse(saved, deckCycleCompleted, List.copyOf(completedCardIds));

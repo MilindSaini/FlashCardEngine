@@ -23,8 +23,7 @@ It combines:
 
 ## Project Demo Video
 
-[Watch the project demo](assets/demo/flashcardengine-demo.mp4)
-
+https://github.com/user-attachments/assets/63c8574d-c8b2-4761-96b6-a04043c2332f
 ```html
 <video src="assets/demo/flashcardengine-demo.mp4" controls width="900"></video>
 ```

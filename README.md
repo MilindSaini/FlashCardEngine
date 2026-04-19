@@ -21,6 +21,14 @@ It combines:
 - Expose deck analytics (mastered, shaky, due, concept graph).
 - Track user streak and learning activity metrics.
 
+## Project Demo Video
+
+[Watch the project demo](assets/demo/flashcardengine-demo.mp4)
+
+```html
+<video src="assets/demo/flashcardengine-demo.mp4" controls width="900"></video>
+```
+
 ## Architecture Overview
 
 ### Runtime Components
